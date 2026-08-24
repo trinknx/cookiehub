@@ -1,0 +1,111 @@
+import { describe, it, expect, beforeEach } from 'vitest'
+import request from 'supertest'
+import { openDb } from '../src/db.js'
+import { buildApp } from '../src/app.js'
+import { createEngine } from '../src/engine.js'
+import { initEncryption, generateKeyB64 } from '../src/crypto.js'
+
+const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
+const HDR = 'NetflixId=v-2; SecureSessionId=x'
+const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }) }
+let ctx
+const build = () => {
+  initEncryption(generateKeyB64())
+  const db = openDb()
+  const adapters = new Map([['netflix', adapter]])
+  const engine = createEngine({ db, adapters })
+  ctx = { app: buildApp({ db, adapters, engine, scheduler: { reschedule: () => {} } }), db, adapters, engine }
+  return ctx
+}
+
+const login = async () => {
+  build()
+  const agent = request.agent(ctx.app)
+  agent.set('X-Requested-With', 'XMLHttpRequest')
+  await agent.post('/api/auth/setup').send({ password: 'hunter2hunter2' })
+  return agent
+}
+
+describe('cookies api', () => {
+  let agent
+  beforeEach(async () => { agent = await login() })
+
+  it('imports single netscape + header with detection', async () => {
+    const a1 = await agent.post('/api/cookies').send({ service: 'netflix', content: NET, label: 'NF1' }).expect(200)
+    expect(a1.body.created).toHaveLength(1)
+    expect(a1.body.created[0].source_format).toBe('netscape')
+    const a2 = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR }).expect(200)
+    expect(a2.body.created[0].source_format).toBe('header')
+  })
+  it('bulk import: mixed valid + invalid chunks reported separately', async () => {
+    const res = await agent.post('/api/cookies').send({ service: 'netflix', content: `${NET}\n\nnot a cookie` }).expect(200)
+    expect(res.body.created).toHaveLength(1)
+    expect(res.body.failed).toEqual([{ index: 1, error: expect.stringContaining('format') }])
+  })
+  it('unknown service → 400', async () => {
+    await agent.post('/api/cookies').send({ service: 'nope', content: HDR }).expect(400)
+  })
+  it('list hides content, filters by service+status', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const list = await agent.get('/api/cookies').expect(200)
+    expect(list.body.total).toBe(1)
+    expect(list.body.items[0]).not.toHaveProperty('content_enc')
+    expect((await agent.get('/api/cookies?status=live')).body.total).toBe(0)
+  })
+  it('export header + netscape round-trip', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const h = await agent.get(`/api/cookies/${created[0].id}/export?format=header`).expect(200)
+    expect(h.body.content).toBe(HDR)
+    const n = await agent.get(`/api/cookies/${created[0].id}/export?format=netscape`).expect(200)
+    expect(n.body.content).toContain('.netflix.com\t')
+  })
+  it('check runs engine and updates status; logs endpoint returns history', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const chk = await agent.post(`/api/cookies/${created[0].id}/check`).expect(200)
+    expect(chk.body.status).toBe('live')
+    const logs = await agent.get(`/api/cookies/${created[0].id}/logs`).expect(200)
+    expect(logs.body.items[0]).toMatchObject({ status: 'live', reason: 'ok' })
+  })
+  it('check-all POST + GET status', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const start = await agent.post('/api/cookies/check-all').send({}).expect(200)
+    expect(start.body.queued).toBeGreaterThanOrEqual(1)
+    const st = await agent.get('/api/cookies/check-all').expect(200)
+    expect(st.body).toHaveProperty('running')
+  })
+  it('PATCH label, DELETE removes', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    await agent.patch(`/api/cookies/${created[0].id}`).send({ label: 'renamed' }).expect(200)
+    await agent.delete(`/api/cookies/${created[0].id}`).expect(200)
+    expect((await agent.get('/api/cookies')).body.total).toBe(0)
+  })
+})
+
+describe('services + settings api', () => {
+  let agent
+  beforeEach(async () => { agent = await login() })
+  it('lists services with counts; patch proxy/disabled', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const list = await agent.get('/api/services').expect(200)
+    expect(list.body).toEqual([{ key: 'netflix', name: 'Netflix', disabled: 0, cookieCount: 1 }])
+    await agent.patch('/api/services/netflix').send({ proxy: 'http://127.0.0.1:8080', disabled: true }).expect(200)
+    const after = await agent.get('/api/services').expect(200)
+    expect(after.body[0]).toMatchObject({ disabled: 1, cookieCount: 1 })
+    const row = await agent.get('/api/cookies/check-all').expect(200) // disabled excluded is engine-level; route must accept GET
+    expect(row.body).toHaveProperty('running')
+  })
+  it('settings get/put with validation', async () => {
+    const s0 = await agent.get('/api/settings').expect(200)
+    expect(s0.body).toEqual({ autoCheckEnabled: false, autoCheckIntervalHours: 6, proxyGlobal: null })
+    await agent.put('/api/settings').send({ autoCheckEnabled: true, autoCheckIntervalHours: 12, proxyGlobal: 'socks5://127.0.0.1:1080' }).expect(200)
+    expect((await agent.get('/api/settings')).body.autoCheckIntervalHours).toBe(12)
+    await agent.put('/api/settings').send({ autoCheckIntervalHours: 500 }).expect(400)
+    await agent.put('/api/settings').send({ proxyGlobal: 'ftp://x' }).expect(400)
+  })
+  it('password change verifies current', async () => {
+    await agent.post('/api/settings/password').send({ currentPassword: 'wrong12345', newPassword: 'newpass12345' }).expect(401)
+    await agent.post('/api/settings/password').send({ currentPassword: 'hunter2hunter2', newPassword: 'newpass12345' }).expect(200)
+    const agent2 = request.agent(ctx.app)
+    await agent2.post('/api/auth/login').send({ password: 'newpass12345' }).expect(200)
+  })
+})

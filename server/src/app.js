@@ -11,7 +11,7 @@ export function buildApp({ db, adapters, engine, scheduler }) {
   app.use(cookieParser())
   app.use('/api/auth', authRoutes(db))
   app.use('/api', requireAuth(db), csrfGuard)
-  app.use('/api/cookies', cookieRoutes({ db, engine }))
+  app.use('/api/cookies', cookieRoutes({ db, engine, adapters }))
   app.use('/api/services', serviceRoutes({ db, adapters }))
   app.use('/api/settings', settingsRoutes({ db, scheduler }))
   app.use('/api', (req, res) => res.status(404).json({ error: { code: 'not_found', message: 'unknown api route' } }))
