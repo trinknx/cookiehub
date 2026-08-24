@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { openDb, setSetting } from '../src/db.js'
-import { createEngine } from '../src/engine.js'
+import { createEngine, mergeRequestHeaders } from '../src/engine.js'
 import { initEncryption, generateKeyB64, encryptJSON, decryptJSON } from '../src/crypto.js'
 import { toHeaderString } from '../src/cookieFormat.js'
 
@@ -50,17 +50,18 @@ describe('engine', () => {
       check: async ({ fetch }) => {
         await fetch('https://x.test/default')
         await fetch('https://x.test/explicit', { headers: { Cookie: 'custom=1' } })
+        await fetch('https://x.test/headers-inst', { headers: new Headers({ cookie: 'explicit=1' }) })
         return { status: 'live', reason: 'ok' }
       }
     }
     const engine = createEngine({ db, adapters: new Map([['fake', captureAdapter]]) })
     await engine.runCheck(id)
     const expected = toHeaderString(decryptJSON(db.prepare('SELECT content_enc FROM cookies WHERE id=?').get(id).content_enc))
-    const [def, explicit] = fetchCalls.slice(-2)
-    expect(def.init.headers.cookie).toBe(expected)
-    expect(def.init.headers['user-agent']).toBeTruthy()
-    expect(explicit.init.headers.Cookie).toBe('custom=1')
-    expect(explicit.init.headers.cookie).toBeUndefined()
+    const [def, explicit, inst] = fetchCalls.slice(-3)
+    expect(def.init.headers.get('cookie')).toBe(expected)
+    expect(def.init.headers.get('user-agent')).toBeTruthy()
+    expect(explicit.init.headers.get('cookie')).toBe('custom=1')
+    expect(inst.init.headers.get('cookie')).toBe('explicit=1')
   })
   it('die keeps old account_info; error keeps status untouched', async () => {
     const db = openDb()
@@ -161,5 +162,35 @@ describe('engine', () => {
     expect(js.running).toBe(false)
     expect(js.failed + js.done).toBe(3)
     expect(js.failed).toBe(1)
+  })
+})
+
+describe('mergeRequestHeaders', () => {
+  const stored = 'sid=stored'
+  it('plain object: absent cookie → stored cookie + default UA, other keys survive', () => {
+    const h = mergeRequestHeaders({ 'accept-language': 'en-US' }, stored, 'UA-X')
+    expect(h.get('cookie')).toBe(stored)
+    expect(h.get('user-agent')).toBe('UA-X')
+    expect(h.get('accept-language')).toBe('en-US')
+  })
+  it('plain object: explicit cookie (any case) wins; own UA kept', () => {
+    const h = mergeRequestHeaders({ Cookie: 'explicit=1', 'User-Agent': 'MyUA' }, stored, 'UA-X')
+    expect(h.get('cookie')).toBe('explicit=1')
+    expect(h.get('user-agent')).toBe('MyUA')
+  })
+  it('Headers instance: explicit cookie wins instead of being silently dropped/overridden', () => {
+    const h = mergeRequestHeaders(new Headers({ cookie: 'explicit=1' }), stored, 'UA-X')
+    expect(h.get('cookie')).toBe('explicit=1')
+    expect(h.get('user-agent')).toBe('UA-X')
+  })
+  it('entries array: explicit cookie wins, other entries survive', () => {
+    const h = mergeRequestHeaders([['cookie', 'explicit=1'], ['x-custom', 'yes']], stored, 'UA-X')
+    expect(h.get('cookie')).toBe('explicit=1')
+    expect(h.get('x-custom')).toBe('yes')
+  })
+  it('undefined headers → stored cookie + default UA', () => {
+    const h = mergeRequestHeaders(undefined, stored, 'UA-X')
+    expect(h.get('cookie')).toBe(stored)
+    expect(h.get('user-agent')).toBe('UA-X')
   })
 })

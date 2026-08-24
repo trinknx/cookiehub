@@ -20,6 +20,15 @@ describe('netflix adapter', () => {
     expect(r).toMatchObject({ status: 'die' })
     expect(r.reason).toContain('/login')
   })
+  it('3xx to non-login (locale/canonical/maintenance) → throws transient, not die', async () => {
+    await expect(netflix.check(ctxOf([res(302, '', { location: '/vi/' })]))).rejects.toThrow('transient redirect to /vi/')
+    await expect(netflix.check(ctxOf([res(301, '', { location: '/maintenance' })]))).rejects.toThrow('transient redirect to /maintenance')
+  })
+  it('3xx login detection is case-insensitive', async () => {
+    const r = await netflix.check(ctxOf([res(302, '', { location: 'https://www.netflix.com/vi/Login' })]))
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('/vi/Login')
+  })
   it('200 → live with country from body', async () => {
     const r = await netflix.check(ctxOf([
       res(200, '{"currentCountry":"VN"}'),
@@ -50,6 +59,9 @@ describe('spotify adapter', () => {
   it('3xx → die', async () => {
     const r = await spotify.check(ctxOf([res(302, '', { location: '/login' })]))
     expect(r.status).toBe('die')
+  })
+  it('3xx to non-login (accounts redirect elsewhere) → throws transient, not die', async () => {
+    await expect(spotify.check(ctxOf([res(302, '', { location: '/maintenance' })]))).rejects.toThrow('transient redirect to /maintenance')
   })
   it('200 → live with parsed email/plan', async () => {
     const r = await spotify.check(ctxOf([res(200, '"email":"me@gmail.com","plan":"Premium","renewalDate":"2026-09-01"')]))

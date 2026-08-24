@@ -11,6 +11,18 @@ const TIMEOUT_MS = 15000
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
+// Build the outgoing header set for boundFetch. init.headers can be a plain object,
+// a Headers instance, or an entries array — the standard Headers constructor accepts
+// all three, unlike Object.keys/spread which silently drops the non-object forms.
+// An explicit adapter-supplied cookie wins over the stored cookie header; the UA
+// is only defaulted when the adapter didn't set one.
+export function mergeRequestHeaders(initHeaders, cookieHeader, ua) {
+  const h = new Headers(initHeaders || {})
+  if (!h.has('cookie')) h.set('cookie', cookieHeader)
+  h.set('user-agent', h.get('user-agent') || ua)
+  return h
+}
+
 export function createEngine({ db, adapters }) {
   const lastReq = new Map()
   const dispatchers = new Map()
@@ -93,12 +105,10 @@ export function createEngine({ db, adapters }) {
         // would hold a semaphore slot forever. Aborting an already-settled fetch is a
         // no-op; pending body reads reject on abort.
         setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-        const initHeaders = init.headers || {}
         // undici has no cookie jar, so the stored cookies must go out as a header.
-        // If the adapter supplied its own cookie header (case-insensitive key), that
-        // wins and we don't add ours to avoid a duplicated header.
-        const hasOwnCookie = Object.keys(initHeaders).some(k => k.toLowerCase() === 'cookie')
-        const headers = { 'user-agent': UA, ...(hasOwnCookie ? {} : { cookie: cookieHeader }), ...initHeaders }
+        // mergeRequestHeaders goes through the standard Headers API so any header
+        // form (object/Headers/entries) survives; an adapter-supplied cookie wins.
+        const headers = mergeRequestHeaders(init.headers, cookieHeader, UA)
         return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
       }
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })

@@ -17,15 +17,18 @@ export default function Dashboard() {
   const [toast, setToast] = useState('')
   const [servicesErr, setServicesErr] = useState('')
   const pollRef = useRef(null)
+  const reqId = useRef(0)
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
   const load = useCallback(async () => {
+    const id = ++reqId.current
     const p = new URLSearchParams()
     if (fService) p.set('service', fService)
     if (fStatus) p.set('status', fStatus)
     if (q) p.set('q', q)
     p.set('page', String(page))
     const list = await api(`/cookies?${p}`)
+    if (id !== reqId.current) return // stale response — a newer request superseded this one
     setItems(list.items)
     setTotal(list.total)
   }, [fService, fStatus, q, page])
@@ -79,13 +82,13 @@ export default function Dashboard() {
     <div className="min-h-screen p-6 space-y-4">
       <header className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-bold mr-auto">CookieHub</h1>
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search label/notes…"
+        <input value={q} onChange={e => { setPage(1); setQ(e.target.value) }} placeholder="Search label/notes…"
           className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5" />
-        <select value={fService} onChange={e => setFService(e.target.value)} className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
+        <select value={fService} onChange={e => { setPage(1); setFService(e.target.value) }} className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
           <option value="">all services</option>
           {services.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
         </select>
-        <select value={fStatus} onChange={e => setFStatus(e.target.value)} className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
+        <select value={fStatus} onChange={e => { setPage(1); setFStatus(e.target.value) }} className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
           <option value="">all status</option>
           <option value="live">live</option><option value="die">die</option><option value="unknown">unknown</option>
         </select>

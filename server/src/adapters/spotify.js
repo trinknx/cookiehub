@@ -9,7 +9,13 @@ export default {
       redirect: 'manual', headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
     })
     if (res.status === 401 || res.status === 403) return { status: 'die', reason: `HTTP ${res.status}` }
-    if (res.status >= 300 && res.status < 400) return { status: 'die', reason: `redirected to ${res.headers.get('location') || 'unknown'}` }
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location') || 'unknown'
+      // only a login redirect proves the session is dead — locale/canonical/maintenance
+      // redirects must not mass-flip valid cookies to die
+      if (loc.toLowerCase().includes('login')) return { status: 'die', reason: `redirected to ${loc}` }
+      throw new Error(`transient redirect to ${loc}`) // engine records 'error', status unchanged
+    }
     if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
     const html = await res.text().catch(() => '')
