@@ -79,8 +79,8 @@ export function cookieRoutes({ db, engine, adapters }) {
   })
 
   r.get('/:id/logs', (req, res) => {
-    const rawLimit = Number(req.query.limit) || 50
-    const limit = Number.isInteger(rawLimit) && rawLimit >= 1 ? Math.min(rawLimit, 200) : 50
+    const raw = Number(req.query.limit)
+    const limit = Number.isInteger(raw) && raw >= 1 && raw <= 200 ? raw : 50
     const items = db.prepare('SELECT * FROM check_logs WHERE cookie_id=? ORDER BY id DESC LIMIT ?').all(req.params.id, limit)
     res.json({ items })
   })

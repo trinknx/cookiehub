@@ -62,7 +62,10 @@ describe('cookies api', () => {
   })
   it('logs limit invalid values fall back to default', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
-    await agent.post(`/api/cookies/${created[0].id}/check`).expect(200)
+    const insLog = ctx.db.prepare('INSERT INTO check_logs(cookie_id,status,reason,detail,proxy_used,duration_ms,created_at) VALUES(?,?,?,?,?,?,?)')
+    for (let i = 0; i < 55; i++) insLog.run(created[0].id, 'live', 'ok', null, null, 1, Date.now())
+    const over = await agent.get(`/api/cookies/${created[0].id}/logs`).query({ limit: '201' }).expect(200)
+    expect(over.body.items).toHaveLength(50)
     await agent.get(`/api/cookies/${created[0].id}/logs`).query({ limit: '-1' }).expect(200)
     await agent.get(`/api/cookies/${created[0].id}/logs`).query({ limit: '2.5' }).expect(200)
   })
