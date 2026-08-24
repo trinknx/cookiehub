@@ -16,6 +16,12 @@ describe('detectFormat', () => {
   it('detects netscape with #HttpOnly_ lines', () => expect(detectFormat(NET_HTTPONLY)).toBe('netscape'))
   it('detects header', () => expect(detectFormat(HDR)).toBe('header'))
   it('detects garbage', () => expect(detectFormat('random text here')).toBe(null))
+  it('detects invalid header names as garbage', () => expect(detectFormat('not a cookie=garbage')).toBe(null))
+  it('does not misdetect tab-containing headers as netscape', () => {
+    const h = 'a=1;\tb=2;\tc=3;\td=4;\te=5;\tf=6'
+    expect(detectFormat(h)).not.toBe('netscape')
+    expect(detectFormat(h)).toBe('header')
+  })
 })
 
 describe('parseNetscape', () => {
@@ -43,6 +49,9 @@ describe('parseHeader', () => {
   it('normalizes newlines to separators', () => {
     expect(parseHeader('a=1\nb=2', '.x.com')).toHaveLength(2)
   })
+  it('throws when names are invalid tokens', () => {
+    expect(() => parseHeader('not a cookie=garbage', '.x.com')).toThrow()
+  })
 })
 
 describe('converters', () => {
@@ -61,5 +70,15 @@ describe('converters', () => {
     const cols = out.split('\n')[1].split('\t')
     expect(Number(cols[4])).toBe(2147483647)
     expect(cols[0]).toBe('.x.com')
+  })
+  it('httpOnly round-trips through netscape export', () => {
+    const parsed = parseNetscape(NET_HTTPONLY, '.netflix.com')
+    const out = toNetscape(parsed)
+    expect(out.split('\n')[1].startsWith('#HttpOnly_.netflix.com')).toBe(true)
+    expect(parseNetscape(out, '.netflix.com')[0].httpOnly).toBe(true)
+  })
+  it('exports expiration 0 as epoch 0', () => {
+    const out = toNetscape([{ domain: '.x.com', path: '/', secure: true, httpOnly: false, expiration: 0, name: 'a', value: '1' }])
+    expect(Number(out.split('\n')[1].split('\t')[4])).toBe(0)
   })
 })

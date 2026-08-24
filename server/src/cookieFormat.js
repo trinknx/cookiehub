@@ -9,10 +9,11 @@ export function detectFormat(chunk) {
   for (let line of chunk.split('\n')) {
     if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length)
     if (!line.trim() || line.trim().startsWith('#')) continue
-    if (line.split('\t').length >= 6) return 'netscape'
+    const fields = line.split('\t')
+    if (fields.length >= 6 && /^\d*$/.test(fields[4])) return 'netscape'
   }
   const flat = chunk.replace(/\s*\n\s*/g, '; ').trim()
-  if (/^[^=;\s][^;=]*=[^;]*(\s*;\s*[^=;\s][^;=]*=[^;]*)*$/.test(flat)) return 'header'
+  if (/^[^=;\s]+=[^;]*(\s*;\s*[^=;\s]+=[^;]*)*$/.test(flat)) return 'header'
   return null
 }
 
@@ -50,7 +51,7 @@ export function parseHeader(chunk, defaultDomain) {
     if (i <= 0) continue
     const name = pair.slice(0, i).trim()
     const value = pair.slice(i + 1).trim()
-    if (!name) continue
+    if (!/^[^=;\s]+$/.test(name)) continue
     cookies.push({ domain: defaultDomain, path: '/', secure: true, httpOnly: false, expiration: null, name, value })
   }
   if (!cookies.length) throw new Error('no cookie pairs found')
@@ -65,8 +66,9 @@ const FAR = 2147483647
 export function toNetscape(cookies) {
   const lines = ['# Netscape HTTP Cookie File']
   for (const c of cookies) {
-    const exp = c.expiration ? Math.min(Math.floor(c.expiration / 1000), FAR) : FAR
-    lines.push([c.domain, c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', exp, c.name, c.value].join('\t'))
+    const exp = c.expiration != null ? Math.min(Math.floor(c.expiration / 1000), FAR) : FAR
+    const domain = c.httpOnly ? `#HttpOnly_${c.domain}` : c.domain
+    lines.push([domain, c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/', c.secure ? 'TRUE' : 'FALSE', exp, c.name, c.value].join('\t'))
   }
   return lines.join('\n') + '\n'
 }
