@@ -31,15 +31,21 @@ First run generates `.env` with `ENCRYPTION_KEY` (keep it safe — losing it los
 ## Deploy (Linux VPS)
 
 ```bash
-# systemd unit
+# 1. install app to /opt/cookiehub (the path the systemd unit expects)
+sudo mkdir -p /opt/cookiehub
+git clone <your-repo-url> /opt/cookiehub
+cd /opt/cookiehub && npm install && npm run build
+
+# 2. systemd unit
 sudo cp deploy/cookiehub.service /etc/systemd/system/
 sudo systemctl enable --now cookiehub
 
-# Caddy (automatic HTTPS)
+# 3. Caddy (automatic HTTPS)
 sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
 ```
 
 Point your domain in `deploy/Caddyfile` first.
+If npm blocks the native module install scripts on the VPS, see the note in [Run](#run) and rebuild there.
 
 ## Dev
 
