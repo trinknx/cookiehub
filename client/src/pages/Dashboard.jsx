@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [addOpen, setAddOpen] = useState(false)
   const [detail, setDetail] = useState(null)
   const [toast, setToast] = useState('')
+  const [servicesErr, setServicesErr] = useState('')
   const pollRef = useRef(null)
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(''), 2500) }
 
@@ -26,14 +27,20 @@ export default function Dashboard() {
   }, [fService, fStatus, q])
 
   useEffect(() => { load().catch(e => showToast(e.message)) }, [load])
-  useEffect(() => { api('/services').then(setServices).catch(() => {}) }, [])
+  useEffect(() => { api('/services').then(setServices).catch(e => setServicesErr(e.message)) }, [])
 
   useEffect(() => {
     if (!job?.running) { clearInterval(pollRef.current); return }
     pollRef.current = setInterval(async () => {
-      const st = await api('/cookies/check-all')
-      setJob(st)
-      if (!st.running) { load().catch(() => {}); showToast(`Check all done: ${st.done} ok, ${st.failed} failed`) }
+      try {
+        const st = await api('/cookies/check-all')
+        setJob(st)
+        if (!st.running) { load().catch(() => {}); showToast(`Check all done: ${st.done} ok, ${st.failed} failed`) }
+      } catch (err) {
+        clearInterval(pollRef.current)
+        setJob(null)
+        showToast(`poll failed: ${err.message}`)
+      }
     }, 2000)
     return () => clearInterval(pollRef.current)
   }, [job?.running, load])
@@ -59,8 +66,8 @@ export default function Dashboard() {
     load().catch(() => {})
   }
   const saveEdit = async (id, body) => {
-    await api(`/cookies/${id}`, { method: 'PATCH', body }).catch(e => showToast(e.message))
-    setDetail(null); load().catch(() => {})
+    try { await api(`/cookies/${id}`, { method: 'PATCH', body }); setDetail(null); await load() }
+    catch (e) { showToast(e.message) }
   }
 
   return (
@@ -77,12 +84,14 @@ export default function Dashboard() {
           <option value="">all status</option>
           <option value="live">live</option><option value="die">die</option><option value="unknown">unknown</option>
         </select>
-        <button onClick={() => setAddOpen(true)} className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-1.5 font-semibold">+ Add</button>
+        <button onClick={() => setAddOpen(true)} disabled={!services.length} title={services.length ? undefined : 'services unavailable'}
+          className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-1.5 font-semibold disabled:opacity-50">+ Add</button>
         <button onClick={checkAll} className="rounded bg-violet-600 hover:bg-violet-500 px-4 py-1.5 font-semibold">
           {job?.running ? `Checking… (${job.done + job.failed}/${job.done + job.failed + job.pending})` : 'Check All'}
         </button>
         <a href="/settings" className="text-slate-400 hover:text-slate-200 text-sm underline">settings</a>
       </header>
+      {servicesErr && <div className="rounded bg-red-900/40 border border-red-800 text-red-300 px-4 py-2 text-sm">{servicesErr}</div>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-800">
         <table className="w-full text-sm">
@@ -112,7 +121,7 @@ export default function Dashboard() {
         </table>
       </div>
 
-      {addOpen && <AddModal services={services} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); load() }} showToast={showToast} />}
+      {addOpen && <AddModal services={services} onClose={() => setAddOpen(false)} onDone={() => load().catch(() => {})} showToast={showToast} />}
       {detail && <DetailDrawer cookie={detail} onClose={() => setDetail(null)} onSave={saveEdit} showToast={showToast} />}
       {toast && <div className="fixed bottom-6 right-6 rounded bg-slate-700 px-4 py-2 shadow-lg">{toast}</div>}
     </div>
@@ -124,17 +133,18 @@ function AddModal({ services, onClose, onDone, showToast }) {
   const [label, setLabel] = useState('')
   const [content, setContent] = useState('')
   const [result, setResult] = useState(null)
+  useEffect(() => { if (!service && services.length) setService(services[0].key) }, [services, service])
+  const close = () => { onClose(); if (result?.created?.length) onDone() }
   const submit = async e => {
     e.preventDefault()
     try {
       const r = await api('/cookies', { method: 'POST', body: { service, content, label } })
       setResult(r)
       showToast(`imported ${r.created.length}, failed ${r.failed.length}`)
-      if (r.created.length && !r.failed.length) onDone()
     } catch (err) { showToast(err.message) }
   }
   return (
-    <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={close}>
       <form onClick={e => e.stopPropagation()} onSubmit={submit} className="bg-slate-800 rounded-xl p-6 w-full max-w-2xl space-y-3">
         <h2 className="text-lg font-bold">Add cookies</h2>
         <div className="flex gap-3">
@@ -148,7 +158,7 @@ function AddModal({ services, onClose, onDone, showToast }) {
           placeholder="Paste cookie (Netscape or header string). Bulk: separate cookies with a blank line."
           className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 font-mono text-xs" />
         <div className="flex gap-2 justify-end">
-          <button type="button" onClick={onClose} className="rounded bg-slate-700 px-4 py-2">close</button>
+          <button type="button" onClick={close} className="rounded bg-slate-700 px-4 py-2">close</button>
           <button className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold">import</button>
         </div>
         {result && (
@@ -166,7 +176,8 @@ function DetailDrawer({ cookie, onClose, onSave, showToast }) {
   const [label, setLabel] = useState(cookie.label)
   const [notes, setNotes] = useState(cookie.notes || '')
   const [logs, setLogs] = useState([])
-  useEffect(() => { api(`/cookies/${cookie.id}/logs`).then(r => setLogs(r.items)).catch(() => {}) }, [cookie.id])
+  const [logsErr, setLogsErr] = useState('')
+  useEffect(() => { api(`/cookies/${cookie.id}/logs`).then(r => setLogs(r.items)).catch(e => setLogsErr(e.message)) }, [cookie.id])
   return (
     <div className="fixed inset-0 bg-black/60 flex justify-end" onClick={onClose}>
       <div onClick={e => e.stopPropagation()} className="bg-slate-800 w-full max-w-md h-full p-6 space-y-4 overflow-auto">
@@ -181,14 +192,18 @@ function DetailDrawer({ cookie, onClose, onSave, showToast }) {
         <div>
           <h3 className="font-semibold mb-2 text-slate-400">Check history</h3>
           <div className="space-y-1 text-xs">
-            {logs.map(l => (
-              <div key={l.id} className="flex gap-2">
-                <span className={l.status === 'live' ? 'text-emerald-400' : l.status === 'die' ? 'text-red-400' : 'text-amber-400'}>{l.status}</span>
-                <span className="text-slate-500">{new Date(l.created_at).toLocaleString()}</span>
-                <span className="text-slate-400 truncate">{l.reason}</span>
-              </div>
-            ))}
-            {!logs.length && <p className="text-slate-500">never checked</p>}
+            {logsErr ? <p className="text-red-400">{logsErr}</p> : (
+              <>
+                {logs.map(l => (
+                  <div key={l.id} className="flex gap-2">
+                    <span className={l.status === 'live' ? 'text-emerald-400' : l.status === 'die' ? 'text-red-400' : 'text-amber-400'}>{l.status}</span>
+                    <span className="text-slate-500">{new Date(l.created_at).toLocaleString()}</span>
+                    <span className="text-slate-400 truncate">{l.reason}</span>
+                  </div>
+                ))}
+                {!logs.length && <p className="text-slate-500">never checked</p>}
+              </>
+            )}
           </div>
         </div>
       </div>
