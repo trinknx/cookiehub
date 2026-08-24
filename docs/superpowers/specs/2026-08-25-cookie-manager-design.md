@@ -36,7 +36,7 @@ VPS
 ```
 
 - 1 repo: `server/` (backend) + `client/` (React + Vite + Tailwind)
-- Node.js ≥ 18 (dùng global fetch/undici)
+- Node.js ≥ 20 (dùng global fetch/undici)
 - Deploy: build client → chạy server → Caddy TLS
 
 ## 3. Data model (SQLite)

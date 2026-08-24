@@ -2,7 +2,7 @@
   "name": "cookiehub-server",
   "type": "module",
   "main": "src/index.js",
-  "scripts": { "start": "node src/index.js", "test": "vitest run --passWithNoTests" },
+  "scripts": { "dev": "node --watch src/index.js", "start": "node src/index.js", "test": "vitest run --passWithNoTests" },
   "dependencies": {
     "@node-rs/argon2": "^2.0.0",
     "better-sqlite3": "^12.10.0",

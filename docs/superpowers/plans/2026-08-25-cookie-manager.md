@@ -6,13 +6,13 @@
 
 **Architecture:** One Node.js process: Express API + SQLite (better-sqlite3) + check engine (undici fetch with http/socks5 proxy support) + node-cron scheduler, serving a built React/Vite/Tailwind SPA. Each service is a JS adapter file implementing `check(ctx)`; adding a service = drop a file, restart.
 
-**Tech Stack:** Node.js ≥ 18 (ESM), Express 4, better-sqlite3, @node-rs/argon2, undici, socks, node-cron, cookie-parser, Vitest + supertest, React 18 + Vite 5 + Tailwind 3 + react-router-dom 6.
+**Tech Stack:** Node.js ≥ 20 (ESM), Express 4, better-sqlite3, @node-rs/argon2, undici, socks, node-cron, cookie-parser, Vitest + supertest, React 18 + Vite 5 + Tailwind 3 + react-router-dom 6.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-cookie-manager-design.md`
 
 ## Global Constraints
 
-- Node ≥ 18; server is ESM (`"type": "module"`); all server code under `server/`, client under `client/`
+- Node ≥ 20; server is ESM (`"type": "module"`); all server code under `server/`, client under `client/`
 - npm workspaces; single `npm install` at root
 - Cookie content is stored ONLY as AES-256-GCM ciphertext (`content_enc`); never returned by `GET /api/cookies`, only via `GET /api/cookies/:id/export`
 - All `/api/*` routes except `/api/auth/*` require a valid session; all mutating requests require header `X-Requested-With: XMLHttpRequest`
@@ -2258,7 +2258,7 @@ Personal single-user cookie manager (Netscape + header string) with live/die che
 
 ## Requirements
 
-- Node.js ≥ 18
+- Node.js ≥ 20
 - A reverse proxy with TLS (Caddy config in `deploy/`)
 
 ## Run
