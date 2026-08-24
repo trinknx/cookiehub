@@ -34,6 +34,8 @@ describe('cookies api', () => {
     const a1 = await agent.post('/api/cookies').send({ service: 'netflix', content: NET, label: 'NF1' }).expect(200)
     expect(a1.body.created).toHaveLength(1)
     expect(a1.body.created[0].source_format).toBe('netscape')
+    expect(a1.body.created[0]).toHaveProperty('account_info', null)
+    expect(a1.body.created[0]).toHaveProperty('last_checked_at', null)
     const a2 = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR }).expect(200)
     expect(a2.body.created[0].source_format).toBe('header')
   })
@@ -44,6 +46,25 @@ describe('cookies api', () => {
   })
   it('unknown service → 400', async () => {
     await agent.post('/api/cookies').send({ service: 'nope', content: HDR }).expect(400)
+  })
+  it('q treats LIKE metacharacters literally', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: '100%_off' })
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'plain' })
+    expect((await agent.get('/api/cookies').query({ q: '100%' })).body.total).toBe(1)
+    expect((await agent.get('/api/cookies').query({ q: '%' })).body.total).toBe(1)
+    expect((await agent.get('/api/cookies').query({ q: '_' })).body.total).toBe(1)
+  })
+  it('fractional/non-finite page normalizes to 1', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const res = await agent.get('/api/cookies').query({ page: '1.5' }).expect(200)
+    expect(res.body.page).toBe(1)
+    await agent.get('/api/cookies').query({ page: 'Infinity' }).expect(200)
+  })
+  it('logs limit invalid values fall back to default', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    await agent.post(`/api/cookies/${created[0].id}/check`).expect(200)
+    await agent.get(`/api/cookies/${created[0].id}/logs`).query({ limit: '-1' }).expect(200)
+    await agent.get(`/api/cookies/${created[0].id}/logs`).query({ limit: '2.5' }).expect(200)
   })
   it('list hides content, filters by service+status', async () => {
     await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
@@ -101,6 +122,9 @@ describe('services + settings api', () => {
     expect((await agent.get('/api/settings')).body.autoCheckIntervalHours).toBe(12)
     await agent.put('/api/settings').send({ autoCheckIntervalHours: 500 }).expect(400)
     await agent.put('/api/settings').send({ proxyGlobal: 'ftp://x' }).expect(400)
+    await agent.put('/api/settings').send({ autoCheckEnabled: 'false' }).expect(400)
+    await agent.put('/api/settings').send({ autoCheckIntervalHours: '12' }).expect(400)
+    await agent.put('/api/settings').send({ proxyGlobal: 123 }).expect(400)
   })
   it('password change verifies current', async () => {
     await agent.post('/api/settings/password').send({ currentPassword: 'wrong12345', newPassword: 'newpass12345' }).expect(401)

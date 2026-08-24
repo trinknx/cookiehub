@@ -13,10 +13,15 @@ export function cookieRoutes({ db, engine, adapters }) {
     const where = []; const params = []
     if (service) { where.push('service_key = ?'); params.push(service) }
     if (status) { where.push('status = ?'); params.push(status) }
-    if (q) { where.push('(label LIKE ? OR notes LIKE ? OR account_info LIKE ?)'); params.push(`%${q}%`, `%${q}%`, `%${q}%`) }
+    if (q) {
+      const esc = String(q).replace(/[\\%_]/g, m => '\\' + m)
+      where.push("(label LIKE ? ESCAPE '\\' OR notes LIKE ? ESCAPE '\\' OR account_info LIKE ? ESCAPE '\\')")
+      params.push(`%${esc}%`, `%${esc}%`, `%${esc}%`)
+    }
     const clause = where.length ? 'WHERE ' + where.join(' AND ') : ''
     const total = db.prepare(`SELECT COUNT(*) c FROM cookies ${clause}`).get(...params).c
-    const page = Math.max(1, Number(p) || 1); const limit = 50
+    const rawPage = Number(req.query.page)
+    const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1; const limit = 50
     const items = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`)
       .all(...params, limit, (page - 1) * limit)
       .map(row => ({ ...row, account_info: row.account_info ? JSON.parse(row.account_info) : null }))
@@ -41,7 +46,8 @@ export function cookieRoutes({ db, engine, adapters }) {
         if (!format) throw new Error('unrecognized cookie format')
         const cookies = format === 'netscape' ? parseNetscape(chunk, adapter.defaultDomain) : parseHeader(chunk, adapter.defaultDomain)
         const info = insert.run(service, label, encryptJSON(cookies), format, notes, now, now)
-        created.push({ id: Number(info.lastInsertRowid), service_key: service, label, source_format: format, status: 'unknown', notes, created_at: now, updated_at: now })
+        const row = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies WHERE id=?`).get(info.lastInsertRowid)
+        created.push({ ...row, account_info: row.account_info ? JSON.parse(row.account_info) : null })
       } catch (e) { failed.push({ index: i, error: e.message }) }
     }
     res.json({ created, failed })
@@ -73,7 +79,8 @@ export function cookieRoutes({ db, engine, adapters }) {
   })
 
   r.get('/:id/logs', (req, res) => {
-    const limit = Math.min(200, Number(req.query.limit) || 50)
+    const rawLimit = Number(req.query.limit) || 50
+    const limit = Number.isInteger(rawLimit) && rawLimit >= 1 ? Math.min(rawLimit, 200) : 50
     const items = db.prepare('SELECT * FROM check_logs WHERE cookie_id=? ORDER BY id DESC LIMIT ?').all(req.params.id, limit)
     res.json({ items })
   })

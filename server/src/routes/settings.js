@@ -17,9 +17,18 @@ export function settingsRoutes({ db, scheduler }) {
 
   r.put('/', (req, res) => {
     const b = req.body || {}
+    if (b.autoCheckEnabled !== undefined && typeof b.autoCheckEnabled !== 'boolean') {
+      return err(res, 'invalid_enabled', 'autoCheckEnabled must be boolean', 400)
+    }
+    if (b.autoCheckIntervalHours !== undefined && (typeof b.autoCheckIntervalHours !== 'number' || !Number.isInteger(b.autoCheckIntervalHours))) {
+      return err(res, 'invalid_interval', 'interval must be integer 1-168 hours', 400)
+    }
+    if (b.proxyGlobal !== undefined && b.proxyGlobal !== null && typeof b.proxyGlobal !== 'string') {
+      return err(res, 'invalid_proxy', 'proxy must be string or null', 400)
+    }
     if (b.autoCheckIntervalHours !== undefined) {
       const h = Number(b.autoCheckIntervalHours)
-      if (!Number.isInteger(h) || h < 1 || h > 168) return err(res, 'invalid_interval', 'interval must be integer 1-168 hours', 400)
+      if (h < 1 || h > 168) return err(res, 'invalid_interval', 'interval must be integer 1-168 hours', 400)
     }
     if (b.proxyGlobal !== undefined && b.proxyGlobal !== null && !PROXY_RE.test(b.proxyGlobal)) {
       return err(res, 'invalid_proxy', 'proxy must be http(s):// or socks5(h):// URL', 400)
