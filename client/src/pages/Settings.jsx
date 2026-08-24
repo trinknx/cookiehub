@@ -5,14 +5,15 @@ export default function Settings() {
   const [s, setS] = useState(null)
   const [services, setServices] = useState([])
   const [msg, setMsg] = useState('')
+  const [loadErr, setLoadErr] = useState('')
+  const [failed, setFailed] = useState(false)
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '' })
   const flash = m => { setMsg(m); setTimeout(() => setMsg(''), 2500) }
 
-  const reload = async () => {
-    setS(await api('/settings'))
-    setServices(await api('/services'))
-  }
-  useEffect(() => { reload().catch(e => flash(e.message)) }, [])
+  const reload = () => Promise.all([api('/settings'), api('/services')])
+    .then(([sv, svcs]) => { setS(sv); setServices(svcs) })
+    .catch(e => { setLoadErr(e.message); setFailed(true) })
+  useEffect(() => { reload() }, [])
 
   const save = async e => {
     e.preventDefault()
@@ -29,6 +30,13 @@ export default function Settings() {
     catch (err) { flash(err.message); reload() }
   }
 
+  if (!s && failed) return (
+    <div className="min-h-screen p-8 max-w-3xl space-y-4">
+      <div className="rounded bg-red-900/40 border border-red-800 text-red-300 px-4 py-2 text-sm">{loadErr}</div>
+      <button onClick={() => { setFailed(false); setLoadErr(''); reload() }}
+        className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold">Retry</button>
+    </div>
+  )
   if (!s) return <div className="p-8 text-slate-400">loading…</div>
   return (
     <div className="min-h-screen p-6 max-w-3xl space-y-8">

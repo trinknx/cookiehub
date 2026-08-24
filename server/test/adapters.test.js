@@ -34,6 +34,12 @@ describe('netflix adapter', () => {
     const r = await netflix.check(ctx)
     expect(r.status).toBe('live')
   })
+  it('429 → throws (transient, not die)', async () => {
+    await expect(netflix.check(ctxOf([res(429)]))).rejects.toThrow('HTTP 429')
+  })
+  it('500 → throws (transient, not die)', async () => {
+    await expect(netflix.check(ctxOf([res(500)]))).rejects.toThrow('HTTP 500')
+  })
 })
 
 describe('spotify adapter', () => {
@@ -49,6 +55,12 @@ describe('spotify adapter', () => {
     const r = await spotify.check(ctxOf([res(200, '"email":"me@gmail.com","plan":"Premium","renewalDate":"2026-09-01"')]))
     expect(r).toMatchObject({ status: 'live' })
     expect(r.accountInfo).toMatchObject({ email: 'me@gmail.com', plan: 'Premium' })
+  })
+  it('429 → throws (transient, not die)', async () => {
+    await expect(spotify.check(ctxOf([res(429)]))).rejects.toThrow('HTTP 429')
+  })
+  it('500 → throws (transient, not die)', async () => {
+    await expect(spotify.check(ctxOf([res(500)]))).rejects.toThrow('HTTP 500')
   })
 })
 

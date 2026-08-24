@@ -1,9 +1,9 @@
 import { Router } from 'express'
 import { hash, verify } from '@node-rs/argon2'
 import { getSetting, setSetting } from '../db.js'
+import { aw } from '../asyncHandler.js'
+import { PROXY_RE } from '../validators.js'
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
-const PROXY_RE = /^(https?|socks5h?):\/\/.+/
-
 
 export function settingsRoutes({ db, scheduler }) {
   const r = Router()
@@ -40,7 +40,7 @@ export function settingsRoutes({ db, scheduler }) {
     res.json(read())
   })
 
-  r.post('/password', async (req, res) => {
+  r.post('/password', aw(async (req, res) => {
     const { currentPassword, newPassword } = req.body || {}
     const stored = getSetting(db, 'password_hash')
     if (!stored || typeof currentPassword !== 'string' || !(await verify(stored, currentPassword))) {
@@ -51,6 +51,6 @@ export function settingsRoutes({ db, scheduler }) {
     }
     setSetting(db, 'password_hash', await hash(newPassword))
     res.json({ ok: true })
-  })
+  }))
   return r
 }

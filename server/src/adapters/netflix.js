@@ -13,6 +13,7 @@ export default {
       const loc = res.headers.get('location') || 'unknown'
       return { status: 'die', reason: `redirected to ${loc}` }
     }
+    if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
     const info = {}
     const home = await res.text().catch(() => '')

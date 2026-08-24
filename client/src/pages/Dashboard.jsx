@@ -9,6 +9,8 @@ export default function Dashboard() {
   const [fService, setFService] = useState('')
   const [fStatus, setFStatus] = useState('')
   const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [job, setJob] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -22,11 +24,14 @@ export default function Dashboard() {
     if (fService) p.set('service', fService)
     if (fStatus) p.set('status', fStatus)
     if (q) p.set('q', q)
+    p.set('page', String(page))
     const list = await api(`/cookies?${p}`)
     setItems(list.items)
-  }, [fService, fStatus, q])
+    setTotal(list.total)
+  }, [fService, fStatus, q, page])
 
   useEffect(() => { load().catch(e => showToast(e.message)) }, [load])
+  useEffect(() => { setPage(1) }, [fService, fStatus, q]) // new filters → back to first page
   useEffect(() => { api('/services').then(setServices).catch(e => setServicesErr(e.message)) }, [])
 
   useEffect(() => {
@@ -35,7 +40,7 @@ export default function Dashboard() {
       try {
         const st = await api('/cookies/check-all')
         setJob(st)
-        if (!st.running) { load().catch(() => {}); showToast(`Check all done: ${st.done} ok, ${st.failed} failed`) }
+        if (!st.running) { load().catch(() => {}); showToast(`Check all done: ${st.done} checked, ${st.failed} errors`) }
       } catch (err) {
         clearInterval(pollRef.current)
         setJob(null)
@@ -50,7 +55,7 @@ export default function Dashboard() {
     catch (e) { showToast(e.message) }
   }
   const checkAll = async () => {
-    try { const r = await api('/cookies/check-all', { method: 'POST', body: fService ? { service: fService } : {} }); setJob({ running: true, ...r }) }
+    try { const r = await api('/cookies/check-all', { method: 'POST', body: fService ? { service: fService } : {} }); setJob({ running: true, pending: r.queued, done: 0, failed: 0 }) }
     catch (e) { showToast(e.message) }
   }
   const copy = async (id, format) => {
@@ -119,6 +124,14 @@ export default function Dashboard() {
             {!items.length && <tr><td colSpan="6" className="p-6 text-center text-slate-500">no cookies — add one</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-end gap-3 text-sm text-slate-400">
+        <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+          className="rounded bg-slate-800 border border-slate-700 px-3 py-1 disabled:opacity-40">Prev</button>
+        <span>page {page} of {Math.max(1, Math.ceil(total / 50))}</span>
+        <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / 50)}
+          className="rounded bg-slate-800 border border-slate-700 px-3 py-1 disabled:opacity-40">Next</button>
       </div>
 
       {addOpen && <AddModal services={services} onClose={() => setAddOpen(false)} onDone={() => load().catch(() => {})} showToast={showToast} />}

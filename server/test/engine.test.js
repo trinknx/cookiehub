@@ -1,7 +1,19 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { openDb, setSetting } from '../src/db.js'
 import { createEngine } from '../src/engine.js'
-import { initEncryption, generateKeyB64, encryptJSON } from '../src/crypto.js'
+import { initEncryption, generateKeyB64, encryptJSON, decryptJSON } from '../src/crypto.js'
+import { toHeaderString } from '../src/cookieFormat.js'
+
+// capture the (url, init) undici fetch was called with — engine tests never do real HTTP
+const fetchCalls = vi.hoisted(() => [])
+vi.mock('undici', () => ({
+  fetch: async (url, init) => {
+    fetchCalls.push({ url, init })
+    return { status: 200, headers: { get: () => null }, text: async () => '' }
+  },
+  ProxyAgent: class {},
+  Agent: class {}
+}))
 
 const fakeAdapter = (result) => ({ key: 'fake', name: 'Fake', defaultDomain: '.fake.com', check: async () => result })
 const throwingAdapter = { key: 'boom', name: 'Boom', defaultDomain: '.b.com', check: async () => { throw new Error('proxy unreachable') } }
@@ -30,6 +42,26 @@ describe('engine', () => {
     expect(JSON.parse(row.account_info)).toEqual({ email: 'a@b.c' })
     expect(db.prepare('SELECT * FROM check_logs WHERE cookie_id=?').get(id)).toMatchObject({ status: 'live', reason: 'ok' })
   })
+  it('boundFetch sends stored cookies as cookie header; adapter-supplied cookie wins', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const captureAdapter = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: async ({ fetch }) => {
+        await fetch('https://x.test/default')
+        await fetch('https://x.test/explicit', { headers: { Cookie: 'custom=1' } })
+        return { status: 'live', reason: 'ok' }
+      }
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', captureAdapter]]) })
+    await engine.runCheck(id)
+    const expected = toHeaderString(decryptJSON(db.prepare('SELECT content_enc FROM cookies WHERE id=?').get(id).content_enc))
+    const [def, explicit] = fetchCalls.slice(-2)
+    expect(def.init.headers.cookie).toBe(expected)
+    expect(def.init.headers['user-agent']).toBeTruthy()
+    expect(explicit.init.headers.Cookie).toBe('custom=1')
+    expect(explicit.init.headers.cookie).toBeUndefined()
+  })
   it('die keeps old account_info; error keeps status untouched', async () => {
     const db = openDb()
     const [id] = seed(db, 'fake')
@@ -42,8 +74,9 @@ describe('engine', () => {
     engine = createEngine({ db, adapters: new Map([['boom', throwingAdapter]]) })
     db.prepare('UPDATE cookies SET service_key=?, status=? WHERE id=?').run('boom', 'die', id)
     expect(await engine.runCheck(id)).toBe('error')
-    row = db.prepare('SELECT status FROM cookies WHERE id=?').get(id)
+    row = db.prepare('SELECT status, last_checked_at FROM cookies WHERE id=?').get(id)
     expect(row.status).toBe('die') // unchanged
+    expect(row.last_checked_at).toBeGreaterThan(0) // error attempt still records a check time
     const log = db.prepare('SELECT * FROM check_logs WHERE cookie_id=? ORDER BY id DESC LIMIT 1').get(id)
     expect(log.status).toBe('error')
     expect(log.reason).toContain('proxy unreachable')

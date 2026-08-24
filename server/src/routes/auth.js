@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { randomBytes, createHash } from 'node:crypto'
 import { hash, verify } from '@node-rs/argon2'
 import { getSetting } from '../db.js'
+import { aw } from '../asyncHandler.js'
 
 const SESSION_TTL_MS = 7 * 24 * 3600 * 1000
 const attempts = new Map() // ip → { count, until }
@@ -22,7 +23,7 @@ export function authRoutes(db) {
     const hasPw = !!getSetting(db, 'password_hash')
     res.json({ authenticated: !!(req.cookies?.sid && validSession(db, req.cookies.sid)), needsSetup: !hasPw })
   })
-  r.post('/setup', async (req, res) => {
+  r.post('/setup', aw(async (req, res) => {
     if (getSetting(db, 'password_hash')) return err(res, 'already_setup', 'password already set', 409)
     const pw = req.body?.password
     if (typeof pw !== 'string' || pw.length < 8 || pw.length > 128) return err(res, 'invalid_password', 'password must be 8-128 chars', 400)
@@ -30,8 +31,8 @@ export function authRoutes(db) {
     if (info.changes === 0) return err(res, 'already_setup', 'password already set', 409)
     createSession(db, res)
     res.json({ ok: true })
-  })
-  r.post('/login', async (req, res) => {
+  }))
+  r.post('/login', aw(async (req, res) => {
     const a = attempts.get(req.ip) || { count: 0, until: 0 }
     if (Date.now() < a.until) return err(res, 'rate_limited', 'too many attempts, try later', 429)
     const pw = req.body?.password
@@ -45,7 +46,7 @@ export function authRoutes(db) {
     attempts.delete(req.ip)
     createSession(db, res)
     res.json({ ok: true })
-  })
+  }))
   r.post('/logout', (req, res) => {
     if (req.cookies?.sid) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(sha256(req.cookies.sid))
     res.clearCookie('sid')

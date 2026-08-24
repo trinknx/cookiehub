@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { encryptJSON, decryptJSON } from '../crypto.js'
+import { aw } from '../asyncHandler.js'
 import { splitBulk, detectFormat, parseNetscape, parseHeader, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
@@ -85,12 +86,12 @@ export function cookieRoutes({ db, engine, adapters }) {
     res.json({ items })
   })
 
-  r.post('/:id/check', async (req, res) => {
+  r.post('/:id/check', aw(async (req, res) => {
     try {
       const status = await engine.runCheck(Number(req.params.id))
       res.json({ status })
     } catch (e) { err(res, e.code || 'check_failed', e.message, e.status || 500) }
-  })
+  }))
 
   r.post('/check-all', (req, res) => {
     try {

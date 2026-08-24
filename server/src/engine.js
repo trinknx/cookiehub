@@ -88,10 +88,18 @@ export function createEngine({ db, adapters }) {
         const wait = startAt - Date.now()
         if (wait > 0) await sleep(wait)
         const ctrl = new AbortController()
-        const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-        try {
-          return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers: { 'user-agent': UA, ...(init.headers || {}) } })
-        } finally { clearTimeout(t) }
+        // Never clear this timer: it must stay armed until the 15s deadline even after
+        // response headers arrive — otherwise a stalled res.text()/res.json() body read
+        // would hold a semaphore slot forever. Aborting an already-settled fetch is a
+        // no-op; pending body reads reject on abort.
+        setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+        const initHeaders = init.headers || {}
+        // undici has no cookie jar, so the stored cookies must go out as a header.
+        // If the adapter supplied its own cookie header (case-insensitive key), that
+        // wins and we don't add ours to avoid a duplicated header.
+        const hasOwnCookie = Object.keys(initHeaders).some(k => k.toLowerCase() === 'cookie')
+        const headers = { 'user-agent': UA, ...(hasOwnCookie ? {} : { cookie: cookieHeader }), ...initHeaders }
+        return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
       }
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })
       const status = result.status === 'live' ? 'live' : 'die'
@@ -108,6 +116,10 @@ export function createEngine({ db, adapters }) {
       })()
       return status
     } catch (e) {
+      const now = Date.now()
+      // a real check attempt happened — record it even though it errored, so the UI
+      // doesn't keep showing "never" after a failed attempt
+      db.prepare('UPDATE cookies SET last_checked_at=?, updated_at=? WHERE id=?').run(now, now, cookieId)
       log(cookieId, 'error', e.message, null, proxy, Date.now() - start)
       return 'error'
     } finally {

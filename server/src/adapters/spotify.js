@@ -10,6 +10,7 @@ export default {
     })
     if (res.status === 401 || res.status === 403) return { status: 'die', reason: `HTTP ${res.status}` }
     if (res.status >= 300 && res.status < 400) return { status: 'die', reason: `redirected to ${res.headers.get('location') || 'unknown'}` }
+    if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
     const html = await res.text().catch(() => '')
     const info = {}

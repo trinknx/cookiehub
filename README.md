@@ -23,6 +23,7 @@ npm install
 npm run build     # build client
 npm start         # serves API + client on :3000
 ```
+The server binds loopback only (`127.0.0.1`) so TLS terminates at the reverse proxy; set `HOST=0.0.0.0` to expose it directly at your own risk.
 
 First run generates `.env` with `ENCRYPTION_KEY` (keep it safe — losing it loses all stored cookies) and asks you to create the admin password in the UI.
 

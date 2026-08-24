@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { PROXY_RE } from '../validators.js'
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
 
 export function serviceRoutes({ db, adapters }) {
@@ -18,6 +19,10 @@ export function serviceRoutes({ db, adapters }) {
     const { proxy, disabled } = req.body || {}
     if (!adapters.has(req.params.key)) return err(res, 'unknown_service', 'unknown service', 400)
     if (proxy !== undefined && proxy !== null && typeof proxy !== 'string') return err(res, 'invalid_proxy', 'proxy must be string or null', 400)
+    if (proxy !== undefined && proxy !== null) {
+      const trimmed = proxy.trim()
+      if (trimmed && !PROXY_RE.test(trimmed)) return err(res, 'invalid_proxy', 'proxy must be http(s):// or socks5(h):// URL', 400)
+    }
     if (disabled !== undefined && typeof disabled !== 'boolean') return err(res, 'invalid_disabled', 'disabled must be boolean', 400)
     const current = db.prepare('SELECT proxy, disabled FROM service_settings WHERE service_key=?').get(req.params.key) || { proxy: null, disabled: 0 }
     const next = {

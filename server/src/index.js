@@ -13,6 +13,7 @@ const env = readEnv('.env')
 if (!env.ENCRYPTION_KEY) {
   const key = generateKeyB64()
   fs.appendFileSync('.env', `${fs.existsSync('.env') ? '\n' : ''}ENCRYPTION_KEY=${key}\n`)
+  try { fs.chmodSync('.env', 0o600) } catch { /* best-effort (not supported on Windows) */ }
   console.warn('[cookiehub] generated ENCRYPTION_KEY and wrote it to .env — keep this file safe')
   env.ENCRYPTION_KEY = key
 }
@@ -34,4 +35,5 @@ if (fs.existsSync(dist)) {
 }
 
 const port = Number(env.PORT) || 3000
-app.listen(port, () => console.log(`[cookiehub] listening on :${port}`))
+const host = process.env.HOST || '127.0.0.1' // loopback by default: TLS should terminate at the reverse proxy
+app.listen(port, host, () => console.log(`[cookiehub] listening on ${host}:${port}`))

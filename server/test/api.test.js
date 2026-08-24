@@ -133,6 +133,11 @@ describe('services + settings api', () => {
     await agent.post('/api/settings/password').send({ currentPassword: 'wrong12345', newPassword: 'newpass12345' }).expect(401)
     await agent.post('/api/settings/password').send({ currentPassword: 'hunter2hunter2', newPassword: 'newpass12345' }).expect(200)
     const agent2 = request.agent(ctx.app)
-    await agent2.post('/api/auth/login').send({ password: 'newpass12345' }).expect(200)
+    await agent2.post('/api/auth/login').set('X-Requested-With', 'XMLHttpRequest').send({ password: 'newpass12345' }).expect(200)
+  })
+  it('PATCH service proxy rejects invalid scheme', async () => {
+    await agent.patch('/api/services/netflix').send({ proxy: 'ftp://x' }).expect(400)
+    await agent.patch('/api/services/netflix').send({ proxy: 'not a url' }).expect(400)
+    await agent.patch('/api/services/netflix').send({ proxy: 'socks5h://1.2.3.4:1080' }).expect(200)
   })
 })
