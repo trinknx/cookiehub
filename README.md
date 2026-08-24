@@ -32,7 +32,7 @@ First run generates `.env` with `ENCRYPTION_KEY` (keep it safe — losing it los
 
 ```bash
 # 1. install app to /opt/cookiehub (the path the systemd unit expects)
-sudo mkdir -p /opt/cookiehub
+sudo install -d -o "$USER" -g "$USER" /opt/cookiehub
 git clone <your-repo-url> /opt/cookiehub
 cd /opt/cookiehub && npm install && npm run build
 
