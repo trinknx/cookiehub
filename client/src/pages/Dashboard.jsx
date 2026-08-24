@@ -133,12 +133,14 @@ function AddModal({ services, onClose, onDone, showToast }) {
   const [label, setLabel] = useState('')
   const [content, setContent] = useState('')
   const [result, setResult] = useState(null)
+  const createdAny = useRef(false)
   useEffect(() => { if (!service && services.length) setService(services[0].key) }, [services, service])
-  const close = () => { onClose(); if (result?.created?.length) onDone() }
+  const close = () => { onClose(); if (createdAny.current) onDone() }
   const submit = async e => {
     e.preventDefault()
     try {
       const r = await api('/cookies', { method: 'POST', body: { service, content, label } })
+      if (r.created.length) createdAny.current = true
       setResult(r)
       showToast(`imported ${r.created.length}, failed ${r.failed.length}`)
     } catch (err) { showToast(err.message) }
