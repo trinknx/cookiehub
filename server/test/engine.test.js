@@ -90,4 +90,43 @@ describe('engine', () => {
     const engine = createEngine({ db: openDb(), adapters: new Map() })
     expect(() => engine.buildDispatcher('ftp://x:21')).toThrow(/unsupported/)
   })
+  it('throttles concurrent same-service requests at least ~1s apart', async () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 3)
+    const starts = []
+    const rec = { key: 'fake', name: 'F', defaultDomain: '.f.com', check: async ({ fetch }) => { try { await fetch('http://127.0.0.1:1/') } catch {} starts.push(Date.now()) } }
+    const engine = createEngine({ db, adapters: new Map([['fake', rec]]) })
+    await engine.runCheck(ids[0]) // prime the service throttle
+    starts.length = 0
+    await Promise.all(ids.slice(1).map(id => engine.runCheck(id)))
+    expect(starts.length).toBe(2)
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(900)
+  })
+  it('buildDispatcher returns a dispatcher for socks5 without connecting (smoke)', () => {
+    const engine = createEngine({ db: openDb(), adapters: new Map() })
+    const d = engine.buildDispatcher('socks5://127.0.0.1:1080')
+    expect(d).toBeTruthy()
+    expect(engine.buildDispatcher('socks5://127.0.0.1:1080')).toBe(d)
+  })
+  it('check-all completes when one cookie is already being checked directly (409 path)', async () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 3)
+    const resolvers = []
+    const slow = { key: 'fake', name: 'F', defaultDomain: '.f.com', check: () => new Promise(r => { resolvers.push(r) }) }
+    const engine = createEngine({ db, adapters: new Map([['fake', slow]]) })
+    const direct = engine.runCheck(ids[0])
+    await new Promise(r => setTimeout(r, 20))
+    const { queued } = engine.startCheckAll()
+    expect(queued).toBe(3)
+    for (let i = 0; i < 3; i++) {
+      await new Promise(r => setTimeout(r, 10))
+      resolvers.shift()({ status: 'live', reason: '' })
+    }
+    await direct
+    await new Promise(r => setTimeout(r, 50))
+    const js = engine.jobStatus()
+    expect(js.running).toBe(false)
+    expect(js.failed + js.done).toBe(3)
+    expect(js.failed).toBe(1)
+  })
 })

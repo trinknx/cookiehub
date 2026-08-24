@@ -1,5 +1,6 @@
 import { fetch as undiciFetch, ProxyAgent, Agent } from 'undici'
 import { SocksClient } from 'socks'
+import tls from 'node:tls'
 import { getSetting } from './db.js'
 import { decryptJSON } from './crypto.js'
 import { toHeaderString } from './cookieFormat.js'
@@ -28,7 +29,7 @@ export function createEngine({ db, adapters }) {
       d = new ProxyAgent({ uri: proxyUrl })
     } else if (u.protocol === 'socks5:' || u.protocol === 'socks5h:') {
       d = new Agent({
-        connect: async ({ hostname, port }, callback) => {
+        connect: async ({ hostname, port, protocol }, callback) => {
           try {
             const { socket } = await SocksClient.createConnection({
               proxy: {
@@ -39,7 +40,13 @@ export function createEngine({ db, adapters }) {
               command: 'connect',
               destination: { host: hostname, port: Number(port) }
             })
-            callback(null, { socket })
+            if (protocol === 'https:') {
+              const tlsSock = tls.connect({ socket, servername: hostname })
+              tlsSock.once('secureConnect', () => callback(null, tlsSock))
+              tlsSock.once('error', e => callback(e, null))
+            } else {
+              callback(null, socket)
+            }
           } catch (e) { callback(e, null) }
         }
       })
@@ -60,17 +67,22 @@ export function createEngine({ db, adapters }) {
     const adapter = adapters.get(row.service_key)
     if (!adapter) { const e = new Error('unknown service'); e.status = 422; throw e }
     inflight.add(cookieId)
-    await acquire()
-    const proxy = proxyFor(row.service_key)
     const start = Date.now()
+    let proxy = null
     try {
+      await acquire()
+      proxy = proxyFor(row.service_key)
       const cookies = decryptJSON(row.content_enc)
       const cookieHeader = toHeaderString(cookies)
       const dispatcher = buildDispatcher(proxy)
       const boundFetch = async (url, init = {}) => {
-        const wait = lastReq.get(row.service_key) + SERVICE_GAP_MS - Date.now()
+        // reserve the start slot synchronously so concurrent same-service fetches cannot
+        // both read the same lastReq value and start together after sleeping in parallel
+        const last = lastReq.get(row.service_key) || 0
+        const startAt = Math.max(last + SERVICE_GAP_MS, Date.now())
+        lastReq.set(row.service_key, startAt)
+        const wait = startAt - Date.now()
         if (wait > 0) await sleep(wait)
-        lastReq.set(row.service_key, Date.now())
         const ctrl = new AbortController()
         const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
         try {
@@ -80,14 +92,16 @@ export function createEngine({ db, adapters }) {
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })
       const status = result.status === 'live' ? 'live' : 'die'
       const now = Date.now()
-      if (status === 'live') {
-        db.prepare('UPDATE cookies SET status=?, account_info=COALESCE(?, account_info), last_checked_at=?, updated_at=? WHERE id=?')
-          .run(status, result.accountInfo ? JSON.stringify(result.accountInfo) : null, now, now, cookieId)
-      } else {
-        db.prepare('UPDATE cookies SET status=?, last_checked_at=?, updated_at=? WHERE id=?')
-          .run(status, now, now, cookieId)
-      }
-      log(cookieId, status, result.reason || '', result.accountInfo || null, proxy, Date.now() - start)
+      db.transaction(() => {
+        if (status === 'live') {
+          db.prepare('UPDATE cookies SET status=?, account_info=COALESCE(?, account_info), last_checked_at=?, updated_at=? WHERE id=?')
+            .run(status, result.accountInfo ? JSON.stringify(result.accountInfo) : null, now, now, cookieId)
+        } else {
+          db.prepare('UPDATE cookies SET status=?, last_checked_at=?, updated_at=? WHERE id=?')
+            .run(status, now, now, cookieId)
+        }
+        log(cookieId, status, result.reason || '', result.accountInfo || null, proxy, Date.now() - start)
+      })()
       return status
     } catch (e) {
       log(cookieId, 'error', e.message, null, proxy, Date.now() - start)
@@ -122,12 +136,15 @@ export function createEngine({ db, adapters }) {
     const rows = db.prepare(sql).all(...params)
     job.running = true; job.pending = rows.length; job.done = 0; job.failed = 0
     ;(async () => {
-      await Promise.all(rows.map(async r => {
-        const st = await runCheck(r.id)
-        job.pending--
-        if (st === 'error') job.failed++; else job.done++
-      }))
-      job.running = false
+      try {
+        await Promise.all(rows.map(async r => {
+          const st = await runCheck(r.id).catch(() => 'error')
+          job.pending--
+          if (st === 'error') job.failed++; else job.done++
+        }))
+      } finally {
+        job.running = false
+      }
     })()
     return { queued: rows.length }
   }
