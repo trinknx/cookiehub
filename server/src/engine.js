@@ -42,8 +42,12 @@ export function createEngine({ db, adapters }) {
             })
             if (protocol === 'https:') {
               const tlsSock = tls.connect({ socket, servername: hostname })
-              tlsSock.once('secureConnect', () => callback(null, tlsSock))
-              tlsSock.once('error', e => callback(e, null))
+              const onError = e => { tlsSock.destroy(); callback(e, null) }
+              tlsSock.once('error', onError)
+              tlsSock.once('secureConnect', () => {
+                tlsSock.removeListener('error', onError)
+                callback(null, tlsSock)
+              })
             } else {
               callback(null, socket)
             }
