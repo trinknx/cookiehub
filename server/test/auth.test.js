@@ -48,4 +48,20 @@ describe('auth flow', () => {
     for (let i = 0; i < 5; i++) await request(app).post('/api/auth/login').send({ password: 'bad' + i }).expect(401)
     await request(app).post('/api/auth/login').send({ password: 'bad6' }).expect(429)
   })
+
+  it('concurrent setups → exactly one 200, one 409', async () => {
+    const app = build()
+    const [a, b] = await Promise.all([
+      request(app).post('/api/auth/setup').send({ password: 'hunter2hunter2' }),
+      request(app).post('/api/auth/setup').send({ password: 'other123456' })
+    ])
+    expect([a.status, b.status]).toContain(200)
+    expect([a.status, b.status]).toContain(409)
+  })
+
+  it('unknown /api/auth route without session → 404 with error shape', async () => {
+    const res = await request(build()).get('/api/auth/unknown')
+    expect(res.status).toBe(404)
+    expect(res.body).toEqual({ error: { code: 'not_found', message: 'unknown auth route' } })
+  })
 })
