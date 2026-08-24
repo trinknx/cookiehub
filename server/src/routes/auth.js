@@ -23,6 +23,7 @@ export function authRoutes(db) {
     res.json({ authenticated: !!(req.cookies?.sid && validSession(db, req.cookies.sid)), needsSetup: !hasPw })
   })
   r.post('/setup', async (req, res) => {
+    if (getSetting(db, 'password_hash')) return err(res, 'already_setup', 'password already set', 409)
     const pw = req.body?.password
     if (typeof pw !== 'string' || pw.length < 8 || pw.length > 128) return err(res, 'invalid_password', 'password must be 8-128 chars', 400)
     const info = db.prepare("INSERT OR IGNORE INTO settings(key,value) VALUES('password_hash',?)").run(await hash(pw))
