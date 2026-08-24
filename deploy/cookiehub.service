@@ -1,0 +1,12 @@
+[Unit]
+Description=CookieHub
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/cookiehub/server
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
