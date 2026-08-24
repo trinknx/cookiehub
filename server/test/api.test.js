@@ -111,10 +111,10 @@ describe('services + settings api', () => {
   it('lists services with counts; patch proxy/disabled', async () => {
     await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const list = await agent.get('/api/services').expect(200)
-    expect(list.body).toEqual([{ key: 'netflix', name: 'Netflix', disabled: 0, cookieCount: 1 }])
+    expect(list.body).toEqual([{ key: 'netflix', name: 'Netflix', disabled: 0, cookieCount: 1, proxy: null }])
     await agent.patch('/api/services/netflix').send({ proxy: 'http://127.0.0.1:8080', disabled: true }).expect(200)
     const after = await agent.get('/api/services').expect(200)
-    expect(after.body[0]).toMatchObject({ disabled: 1, cookieCount: 1 })
+    expect(after.body[0]).toMatchObject({ disabled: 1, cookieCount: 1, proxy: 'http://127.0.0.1:8080' })
     const row = await agent.get('/api/cookies/check-all').expect(200) // disabled excluded is engine-level; route must accept GET
     expect(row.body).toHaveProperty('running')
   })

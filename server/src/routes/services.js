@@ -6,10 +6,12 @@ export function serviceRoutes({ db, adapters }) {
   r.get('/', (req, res) => {
     const counts = db.prepare('SELECT service_key, COUNT(*) c FROM cookies GROUP BY service_key').all()
     const countMap = new Map(counts.map(x => [x.service_key, x.c]))
-    const settings = db.prepare('SELECT service_key, disabled FROM service_settings').all()
+    const settings = db.prepare('SELECT service_key, proxy, disabled FROM service_settings').all()
     const disabledMap = new Map(settings.map(x => [x.service_key, x.disabled]))
+    const proxyMap = new Map(settings.map(x => [x.service_key, x.proxy]))
     res.json([...adapters.values()].map(a => ({
-      key: a.key, name: a.name, disabled: disabledMap.get(a.key) ?? 0, cookieCount: countMap.get(a.key) ?? 0
+      key: a.key, name: a.name, disabled: disabledMap.get(a.key) ?? 0, cookieCount: countMap.get(a.key) ?? 0,
+      proxy: proxyMap.get(a.key) ?? null
     })))
   })
   r.patch('/:key', (req, res) => {

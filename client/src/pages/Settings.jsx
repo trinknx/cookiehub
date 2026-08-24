@@ -26,7 +26,7 @@ export default function Settings() {
   }
   const patchService = async (key, body) => {
     try { await api(`/services/${key}`, { method: 'PATCH', body }); reload() }
-    catch (err) { flash(err.message) }
+    catch (err) { flash(err.message); reload() }
   }
 
   if (!s) return <div className="p-8 text-slate-400">loading…</div>
@@ -64,13 +64,13 @@ export default function Settings() {
             <span className="font-semibold">{sv.name}</span>
             <span className="text-xs text-slate-400">{sv.cookieCount} cookies · {sv.disabled ? 'disabled' : 'enabled'}</span>
             <input placeholder={`proxy override for ${sv.key} (empty = global)`}
-              defaultValue=""
+              defaultValue={sv.proxy ?? ''}
               id={`proxy-${sv.key}`}
               className="flex-1 min-w-48 rounded bg-slate-900 border border-slate-700 px-3 py-1.5 font-mono text-xs" />
             <button onClick={() => patchService(sv.key, { proxy: document.getElementById(`proxy-${sv.key}`).value || null })}
               className="rounded bg-slate-700 hover:bg-slate-600 px-3 py-1.5 text-sm">set proxy</button>
             <label className="flex items-center gap-1 text-sm">
-              <input type="checkbox" defaultChecked={!sv.disabled}
+              <input type="checkbox" checked={!sv.disabled}
                 onChange={e => patchService(sv.key, { disabled: !e.target.checked })} /> enabled
             </label>
           </div>
