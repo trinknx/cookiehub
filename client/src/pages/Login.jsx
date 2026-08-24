@@ -8,9 +8,11 @@ export default function Login() {
   const [pw2, setPw2] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
   const nav = useNavigate()
 
-  useEffect(() => { api('/auth/session').then(setSession).catch(e => setError(e.message)) }, [])
+  const loadSession = () => api('/auth/session').then(setSession).catch(e => { setError(e.message); setFailed(true) })
+  useEffect(() => { loadSession() }, [])
 
   const submit = async e => {
     e.preventDefault(); setError('')
@@ -22,6 +24,16 @@ export default function Login() {
       nav('/')
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
+
+  if (!session && failed) return (
+    <div className="min-h-screen grid place-items-center">
+      <div className="w-80 space-y-4 bg-slate-800 p-8 rounded-xl shadow-lg text-center">
+        <p className="text-red-400 text-sm">{error}</p>
+        <button onClick={() => { setFailed(false); setError(''); loadSession() }}
+          className="w-full rounded bg-sky-600 hover:bg-sky-500 py-2 font-semibold">Retry</button>
+      </div>
+    </div>
+  )
 
   if (!session) return <div className="min-h-screen grid place-items-center text-slate-400">loading…</div>
   return (
