@@ -1,5 +1,7 @@
 import { loadAdapters } from '../src/adapters/index.js'
 import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
 import { describe, it, expect } from 'vitest'
 import netflix from '../src/adapters/netflix.js'
 import spotify from '../src/adapters/spotify.js'
@@ -55,5 +57,14 @@ describe('registry', () => {
     const map = await loadAdapters(path.resolve('src/adapters'))
     expect([...map.keys()].sort()).toEqual(['netflix', 'spotify'])
     expect(map.get('netflix').defaultDomain).toBe('.netflix.com')
+  })
+  it('rejects adapter with non-string metadata', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cookiehub-adapters-'))
+    try {
+      fs.writeFileSync(path.join(dir, 'bad.js'), 'export default { key: {}, name: 1, defaultDomain: [], check() {} }\n')
+      await expect(loadAdapters(dir)).rejects.toThrow(/invalid adapter bad\.js/)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

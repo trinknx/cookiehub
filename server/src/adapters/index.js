@@ -8,7 +8,8 @@ export async function loadAdapters(dir = fileURLToPath(new URL('.', import.meta.
     if (!f.endsWith('.js') || f === 'index.js') continue
     const mod = await import(pathToFileURL(path.join(dir, f)).href)
     const a = mod.default ?? mod
-    if (!a?.key || !a?.name || !a?.defaultDomain || typeof a.check !== 'function') {
+    if (!(typeof a.key === 'string' && a.key) || !(typeof a.name === 'string' && a.name) ||
+        !(typeof a.defaultDomain === 'string' && a.defaultDomain) || typeof a.check !== 'function') {
       throw new Error(`invalid adapter ${f}: needs key, name, defaultDomain, check()`)
     }
     if (map.has(a.key)) throw new Error(`duplicate adapter key ${a.key} (${f})`)
