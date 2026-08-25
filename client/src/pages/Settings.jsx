@@ -71,7 +71,7 @@ export default function Settings() {
           <div key={sv.key} className="flex flex-wrap items-center gap-3 border-t border-slate-700 pt-3 first:border-0 first:pt-0">
             <span className="font-semibold">{sv.name}</span>
             <span className="text-xs text-slate-400">{sv.cookieCount} cookies · {sv.disabled ? 'disabled' : 'enabled'}</span>
-            <input placeholder={`proxy override for ${sv.key} (empty = global)`}
+            <input placeholder={`proxy override for ${sv.key} (empty = global, direct = no proxy)`}
               defaultValue={sv.proxy ?? ''}
               id={`proxy-${sv.key}`}
               className="flex-1 min-w-48 rounded bg-slate-900 border border-slate-700 px-3 py-1.5 font-mono text-xs" />

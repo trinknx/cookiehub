@@ -77,8 +77,14 @@ export function createEngine({ db, adapters }) {
     return d
   }
 
-  const proxyFor = serviceKey =>
-    getServiceSetting(serviceKey)?.proxy ?? getSetting(db, 'proxy_global') ?? null
+  // per-service precedence: 'direct' explicitly escapes the global proxy
+  // (services behind CF challenges like chatgpt.com may need the home IP
+  // while sibling services still ride the global proxy)
+  const proxyFor = serviceKey => {
+    const s = getServiceSetting(serviceKey)
+    if (s?.proxy === 'direct') return null
+    return s?.proxy ?? getSetting(db, 'proxy_global') ?? null
+  }
 
   // Adapter-facing fetch: per-service throttle, 15s abort deadline, proxy
   // dispatcher, and the stored-cookie header merge. Shared by runCheck and
@@ -120,7 +126,7 @@ export function createEngine({ db, adapters }) {
       const cookieHeader = toHeaderString(cookies)
       const dispatcher = buildDispatcher(proxy)
       const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
-      const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })
+      const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, proxy, log: () => {} })
       const status = result.status === 'live' ? 'live' : 'die'
       // deleted while the adapter was in flight — nothing to persist; returning the
       // adapter's status keeps check-all done/failed accounting sane
@@ -172,6 +178,46 @@ export function createEngine({ db, adapters }) {
     }
   }
 
+  // Link a TV with the code it displays (netflix tv8 / hbomax linkDevice).
+  // Same guards and machinery as getNftoken: an action, but no status change.
+  async function linkTv(cookieId, code) {
+    const row = db.prepare('SELECT * FROM cookies WHERE id=?').get(cookieId)
+    if (!row) { const e = new Error('cookie not found'); e.status = 404; throw e }
+    const adapter = adapters.get(row.service_key)
+    if (!adapter) { const e = new Error('unknown service'); e.status = 422; throw e }
+    if (typeof adapter.linkTv !== 'function') throw Object.assign(new Error('service does not support TV linking'), { status: 422 })
+    await acquire()
+    try {
+      const cookies = decryptJSON(row.content_enc)
+      const cookieHeader = toHeaderString(cookies)
+      const dispatcher = buildDispatcher(proxyFor(row.service_key))
+      const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
+      return await adapter.linkTv({ cookies, cookieHeader, fetch: boundFetch, log: () => {} }, code)
+    } finally {
+      releaseSlot()
+    }
+  }
+
+  // Read-only Spotify family-plan info (address, invite link, members).
+  // Same guards and machinery as getNftoken: an action, no status change.
+  async function getFamily(cookieId) {
+    const row = db.prepare('SELECT * FROM cookies WHERE id=?').get(cookieId)
+    if (!row) { const e = new Error('cookie not found'); e.status = 404; throw e }
+    const adapter = adapters.get(row.service_key)
+    if (!adapter) { const e = new Error('unknown service'); e.status = 422; throw e }
+    if (typeof adapter.family !== 'function') throw Object.assign(new Error('service does not support family info'), { status: 422 })
+    await acquire()
+    try {
+      const cookies = decryptJSON(row.content_enc)
+      const cookieHeader = toHeaderString(cookies)
+      const dispatcher = buildDispatcher(proxyFor(row.service_key))
+      const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
+      return await adapter.family({ cookies, cookieHeader, fetch: boundFetch, log: () => {} })
+    } finally {
+      releaseSlot()
+    }
+  }
+
   const log = (cookieId, status, reason, detail, proxy, duration) =>
     db.prepare('INSERT INTO check_logs(cookie_id,status,reason,detail,proxy_used,duration_ms,created_at) VALUES(?,?,?,?,?,?,?)')
       .run(cookieId, status, reason, detail ? JSON.stringify(detail) : null, proxy, duration, Date.now())
@@ -217,5 +263,5 @@ export function createEngine({ db, adapters }) {
 
   const jobStatus = () => ({ ...job, activeIds: [...inflight] })
 
-  return { runCheck, getNftoken, startCheckAll, jobStatus, buildDispatcher, proxyFor }
+  return { runCheck, getNftoken, linkTv, getFamily, startCheckAll, jobStatus, buildDispatcher, proxyFor }
 }

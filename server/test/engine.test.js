@@ -82,6 +82,17 @@ describe('engine', () => {
     expect(log.status).toBe('error')
     expect(log.reason).toContain('proxy unreachable')
   })
+  it("proxyFor: 'direct' escapes the global proxy; service URL wins; else global", () => {
+    const db = openDb()
+    setSetting(db, 'proxy_global', 'socks5://global:1')
+    const engine = createEngine({ db, adapters: new Map() })
+    expect(engine.proxyFor('unset-svc')).toBe('socks5://global:1') // no row → global
+    db.prepare("INSERT INTO service_settings(service_key,proxy) VALUES('direct-svc','direct')").run()
+    db.prepare("INSERT INTO service_settings(service_key,proxy) VALUES('proxied','http://p:2')").run()
+    expect(engine.proxyFor('direct-svc')).toBeNull()
+    expect(engine.proxyFor('proxied')).toBe('http://p:2')
+    expect(engine.proxyFor('unset-svc')).toBe('socks5://global:1')
+  })
   it('double check of same cookie → 409', async () => {
     const db = openDb()
     const [id] = seed(db, 'fake')
@@ -242,6 +253,31 @@ describe('engine', () => {
     await expect(engine.getNftoken(99999)).rejects.toMatchObject({ status: 404 })
     db.prepare('UPDATE cookies SET service_key=? WHERE id=?').run('ghost', id)
     await expect(engine.getNftoken(id)).rejects.toMatchObject({ status: 422, message: 'unknown service' })
+  })
+
+  it('linkTv passes the code through, returns adapter result, writes NOTHING', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const rowBefore = db.prepare('SELECT * FROM cookies WHERE id=?').get(id)
+    const calls = []
+    const linky = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: async () => ({ status: 'live', reason: '' }),
+      linkTv: async (ctx, code) => { calls.push({ hasFetch: typeof ctx.fetch, header: ctx.cookieHeader, code }); return { ok: true, message: 'TV linked' } }
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', linky]]) })
+    const r = await engine.linkTv(id, 'A1B2C3D4')
+    expect(r).toEqual({ ok: true, message: 'TV linked' })
+    expect(calls).toEqual([{ hasFetch: 'function', header: 'sid=v0', code: 'A1B2C3D4' }])
+    expect(db.prepare('SELECT COUNT(*) c FROM check_logs').get().c).toBe(0)
+    expect(db.prepare('SELECT * FROM cookies WHERE id=?').get(id)).toEqual(rowBefore)
+  })
+  it('linkTv: adapter without linkTv → 422; unknown id → 404', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })]]) })
+    await expect(engine.linkTv(id, 'A1B2C3D4')).rejects.toMatchObject({ status: 422 })
+    await expect(engine.linkTv(99999, 'A1B2C3D4')).rejects.toMatchObject({ status: 404 })
   })
   it('jobStatus exposes activeIds of in-flight checks', async () => {
     const db = openDb()

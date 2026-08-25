@@ -7,7 +7,15 @@ import { initEncryption, generateKeyB64 } from '../src/crypto.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
 const HDR = 'NetflixId=v-2; SecureSessionId=x'
-const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }), nftoken: async () => ({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 }) }
+const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }), nftoken: async () => ({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 }), linkTv: async (_ctx, code) => { if (code === 'DEADCODE') { const e = new Error('invalid or expired TV code'); e.status = 400; throw e } return { ok: true, message: 'TV linked — check your TV' } } }
+// spotify fixture is registered per-test via ctx.adapters.set — adding it to the
+// shared map would break the exact services-list assertion further down
+const spotifyFamily = (familyImpl = async () => ({
+  address: 'Parko g. 36, Vilnius', inviteLink: 'https://www.spotify.com/us/family/join/invite/T0K3N/',
+  isManager: true, addressUpdateRequired: false,
+  members: [{ name: 'mgr', username: 'mgr', country: 'LT', isManager: true, isYou: true }],
+  usedSeats: 1, maxCapacity: 6
+})) => ({ key: 'spotify', name: 'Spotify', defaultDomain: '.spotify.com', check: async () => ({ status: 'live', reason: 'ok' }), family: familyImpl })
 let ctx
 const build = () => {
   initEncryption(generateKeyB64())
@@ -287,6 +295,31 @@ describe('cookies api', () => {
     expect(r.body).toEqual({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 })
     await agent.post('/api/cookies/99999/nftoken').expect(404)
   })
+
+  it('POST /:id/linktv: valid code passes through; invalid formats and adapter rejections map to 400', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const ok = await agent.post(`/api/cookies/${created[0].id}/linktv`).send({ code: 'A1B2C3D4' }).expect(200)
+    expect(ok.body).toEqual({ ok: true, message: 'TV linked — check your TV' })
+    await agent.post(`/api/cookies/${created[0].id}/linktv`).send({ code: 'ab' }).expect(400) // too short
+    await agent.post(`/api/cookies/${created[0].id}/linktv`).send({}).expect(400) // missing
+    await agent.post(`/api/cookies/${created[0].id}/linktv`).send({ code: 'DEADCODE' }).expect(400) // adapter verdict
+    await agent.post('/api/cookies/99999/linktv').send({ code: 'A1B2C3D4' }).expect(404)
+  })
+  it('POST /:id/family: spotify cookie returns payload; netflix cookie → 422 (spotify-only); unknown id → 404', async () => {
+    ctx.adapters.set('spotify', spotifyFamily())
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'spotify', content: 'sp_dc=x; sp_key=y' })
+    const r = await agent.post(`/api/cookies/${created[0].id}/family`).expect(200)
+    expect(r.body).toMatchObject({ address: 'Parko g. 36, Vilnius', inviteLink: 'https://www.spotify.com/us/family/join/invite/T0K3N/', isManager: true })
+    const nf = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    await agent.post(`/api/cookies/${nf.body.created[0].id}/family`).expect(422)
+    await agent.post('/api/cookies/99999/family').expect(404)
+  })
+  it('POST /:id/family: adapter verdict (dead session / non-family) → 400 family_failed', async () => {
+    ctx.adapters.set('spotify', spotifyFamily(async () => { const e = new Error('account is not on a Family plan'); e.status = 400; throw e }))
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'spotify', content: 'sp_dc=x' })
+    const r = await agent.post(`/api/cookies/${created[0].id}/family`).expect(400)
+    expect(r.body.error).toMatchObject({ code: 'family_failed', message: 'account is not on a Family plan' })
+  })
   it('PATCH label, DELETE removes', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     await agent.patch(`/api/cookies/${created[0].id}`).send({ label: 'renamed' }).expect(200)
@@ -331,5 +364,7 @@ describe('services + settings api', () => {
     await agent.patch('/api/services/netflix').send({ proxy: 'ftp://x' }).expect(400)
     await agent.patch('/api/services/netflix').send({ proxy: 'not a url' }).expect(400)
     await agent.patch('/api/services/netflix').send({ proxy: 'socks5h://1.2.3.4:1080' }).expect(200)
+    await agent.patch('/api/services/netflix').send({ proxy: 'direct' }).expect(200)
+    expect((await agent.get('/api/services')).body[0].proxy).toBe('direct')
   })
 })

@@ -147,5 +147,36 @@ export default {
     const token = j?.value?.account?.token?.default?.token
     if (!token) { log('nftoken response had no token — cookie may be dead'); throw new Error('no nftoken in response (cookie may be dead)') }
     return { link: 'https://netflix.com/?nftoken=' + encodeURIComponent(token), expires: j.value.account.token.default.expires }
+  },
+  // Link a TV by entering the code it displays (netflix.com/tv8 flow).
+  // Verified against the live tv8 page 2026-08-25: the code entry form is a
+  // classic server-rendered POST to the same URL with hidden fields flow,
+  // authURL (page-scoped token), flowMode=enterTvLoginRendezvousCode,
+  // withFields=tvLoginRendezvousCode,isTvUrl2, code + tvLoginRendezvousCode
+  // (same value) and action=nextAction. A bad code re-renders the entry page
+  // with "Something went wrong. Try again."; success leaves the entry flow.
+  async linkTv({ fetch, log }, code) {
+    const clean = String(code || '').trim().toUpperCase().replace(/\s+/g, '')
+    if (!/^[A-Z0-9]{4,12}$/.test(clean)) { const e = new Error('invalid code format (4-12 letters/digits)'); e.status = 400; throw e }
+    const HEADERS = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
+    const pageRes = await fetch('https://www.netflix.com/tv8', { headers: HEADERS })
+    if (pageRes.status !== 200) throw new Error(`tv8 page HTTP ${pageRes.status}`)
+    const html = await pageRes.text()
+    const authURL = html.match(/name="authURL" value="([^"]+)"/)?.[1]
+    const flow = html.match(/name="flow" value="([^"]+)"/)?.[1] || 'websiteSignUp'
+    if (!authURL) { const e = new Error('tv8 page has no authURL — session may be dead, recheck this cookie'); e.status = 400; throw e }
+    const form = new URLSearchParams({ flow, authURL, flowMode: 'enterTvLoginRendezvousCode', withFields: 'tvLoginRendezvousCode,isTvUrl2', code: clean, tvLoginRendezvousCode: clean, action: 'nextAction' })
+    const res = await fetch('https://www.netflix.com/tv8', {
+      method: 'POST',
+      headers: { ...HEADERS, 'content-type': 'application/x-www-form-urlencoded' },
+      body: form.toString()
+    })
+    if (res.status !== 200) throw new Error(`code submit HTTP ${res.status}`)
+    const out = await res.text()
+    log(`tv8 submit responded ${out.length} bytes`)
+    if (/something went wrong|incorrect code|enterTvLoginRendezvousCode/i.test(out)) {
+      const e = new Error('invalid or expired TV code'); e.status = 400; throw e
+    }
+    return { ok: true, message: 'TV linked — check your TV' }
   }
 }

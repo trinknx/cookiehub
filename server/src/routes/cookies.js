@@ -109,6 +109,22 @@ export function cookieRoutes({ db, engine, adapters }) {
     } catch (e) { err(res, e.code || 'nftoken_failed', e.message, e.status || 500) }
   }))
 
+  r.post('/:id/linktv', aw(async (req, res) => {
+    const { code } = req.body || {}
+    if (typeof code !== 'string' || !/^[A-Za-z0-9]{4,12}$/.test(code.trim())) {
+      return err(res, 'invalid_code', 'code must be 4-12 letters/digits', 400)
+    }
+    try {
+      res.json(await engine.linkTv(Number(req.params.id), code.trim()))
+    } catch (e) { err(res, e.code || 'linktv_failed', e.message, e.status || 500) }
+  }))
+
+  r.post('/:id/family', aw(async (req, res) => {
+    try {
+      res.json(await engine.getFamily(Number(req.params.id)))
+    } catch (e) { err(res, e.code || 'family_failed', e.message, e.status || 500) }
+  }))
+
   r.post('/remove-die', (req, res) => {
     const { service } = req.body || {}
     if (service !== undefined && !adapters.has(service)) return err(res, 'unknown_service', `unknown service: ${service}`, 400)

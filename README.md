@@ -15,6 +15,7 @@ Personal single-user cookie manager (Netscape + header string) with live/die che
 ## Requirements
 
 - Node.js ≥ 20
+- Python 3 with `curl_cffi` (`pip install curl_cffi`) — required for ChatGPT checks: chatgpt.com sits behind a Cloudflare browser challenge that blocks Node TLS fingerprints; checks route through a Chrome-impersonated curl and record `error` (not `die`) when it is unavailable
 - A reverse proxy with TLS (Caddy config in `deploy/`)
 
 ## Run

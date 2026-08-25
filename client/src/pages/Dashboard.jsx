@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
-  ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, FolderOpen, Link2, Music2,
-  PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Trash2, Tv, Upload
+  ArrowLeft, Bot, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, Film, FolderOpen, Link2, Music2,
+  PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Sparkles, Trash2, Tv, Upload, Users
 } from 'lucide-react'
 
 const STATUS_STYLE = { live: 'bg-emerald-600', die: 'bg-red-600', unknown: 'bg-slate-600' }
 const SERVICE_STYLE = {
   netflix: { gradient: 'linear-gradient(135deg,#E50914,#B20710)', Icon: Clapperboard, dot: '#E50914' },
-  spotify: { gradient: 'linear-gradient(135deg,#1DB954,#169C46)', Icon: Music2, dot: '#1DB954' }
+  spotify: { gradient: 'linear-gradient(135deg,#1DB954,#169C46)', Icon: Music2, dot: '#1DB954' },
+  chatgpt: { gradient: 'linear-gradient(135deg,#10a37f,#0d8a6a)', Icon: Bot, dot: '#10a37f' },
+  claude: { gradient: 'linear-gradient(135deg,#D97757,#b85c3f)', Icon: Sparkles, dot: '#D97757' },
+  hbomax: { gradient: 'linear-gradient(135deg,#5B34F0,#2B1B8E)', Icon: Film, dot: '#5B34F0' }
 }
 const FALLBACK_STYLE = { gradient: 'linear-gradient(135deg,#475569,#1e293b)', Icon: Tv, dot: '#94a3b8' }
 const styleFor = key => SERVICE_STYLE[key] || FALLBACK_STYLE
@@ -21,7 +24,11 @@ const planPillClass = plan => {
   const p = plan.toLowerCase()
   if (p.includes('premium')) return 'bg-fuchsia-600/30 text-fuchsia-300'
   if (p.includes('standard')) return 'bg-sky-600/30 text-sky-300' // also matches 'Standard with ads'
-  return 'bg-slate-500/30 text-slate-300' // Basic and unknown plans
+  // ChatGPT planType values (exact match — 'go' would substring-match too much)
+  if (p === 'plus' || p === 'pro' || p.startsWith('max')) return 'bg-emerald-600/30 text-emerald-300'
+  if (p === 'team' || p === 'enterprise') return 'bg-indigo-600/30 text-indigo-300'
+  if (p === 'go') return 'bg-amber-500/30 text-amber-300'
+  return 'bg-slate-500/30 text-slate-300' // Free, Basic and unknown plans
 }
 const qualityTag = raw => {
   const q = String(raw).toLowerCase()
@@ -55,6 +62,7 @@ export default function Dashboard() {
   const [job, setJob] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [detail, setDetail] = useState(null)
+  const [familyFor, setFamilyFor] = useState(null)
   const [toast, setToast] = useState('')
   const [servicesErr, setServicesErr] = useState('')
   const pollRef = useRef(null)
@@ -274,9 +282,17 @@ export default function Dashboard() {
                             className="rounded-lg p-1.5 text-slate-300 bg-slate-700/50 hover:bg-slate-700"><Copy className="w-4 h-4" /></button>
                           <button onClick={() => copy(c.id, 'netscape')} title="Copy as netscape"
                             className="rounded-lg p-1.5 text-slate-300 bg-slate-700/50 hover:bg-slate-700"><ClipboardCopy className="w-4 h-4" /></button>
+                          {c.service_key === 'spotify' && (
+                            <button onClick={() => setFamilyFor(c)} title="Family plan info (address + invite link)"
+                              className="rounded-lg p-1.5 text-emerald-500 bg-emerald-600/20 hover:bg-emerald-600/30"><Users className="w-4 h-4" /></button>
+                          )}
                           {c.service_key === 'netflix' && (
                             <button onClick={() => copyNft(c.id)} title="Copy nftoken login link"
-                              className="rounded-lg p-1.5 text-violet-600 bg-violet-600/20 hover:bg-violet-600/30"><Link2 className="w-4 h-4" /></button>
+                            className="rounded-lg p-1.5 text-violet-600 bg-violet-600/20 hover:bg-violet-600/30"><Link2 className="w-4 h-4" /></button>
+                          )}
+                          {(c.service_key === 'netflix' || c.service_key === 'hbomax') && (
+                            <button onClick={() => setLinkTvFor(c)} title="Link TV with code"
+                              className="rounded-lg p-1.5 text-sky-600 bg-sky-600/20 hover:bg-sky-600/30"><Tv className="w-4 h-4" /></button>
                           )}
                           <button onClick={() => remove(c.id)} title="Delete"
                             className="rounded-lg p-1.5 text-red-600 bg-red-600/20 hover:bg-red-600/30"><Trash2 className="w-4 h-4" /></button>
@@ -302,6 +318,7 @@ export default function Dashboard() {
 
       {addOpen && <AddModal services={services} onClose={() => setAddOpen(false)} onDone={() => { load().catch(() => {}); loadServices() }} showToast={showToast} />}
       {detail && <DetailDrawer cookie={detail} onClose={() => setDetail(null)} onSave={saveEdit} showToast={showToast} />}
+      {familyFor && <FamilyModal cookie={familyFor} onClose={() => setFamilyFor(null)} showToast={showToast} />}
       {toast && <div className="fixed bottom-6 right-6 rounded bg-slate-700 px-4 py-2 shadow-lg">{toast}</div>}
     </div>
   )
@@ -387,6 +404,122 @@ function AddModal({ services, onClose, onDone, showToast }) {
           </div>
         )}
       </form>
+    </div>
+  )
+}
+
+function LinkTvModal({ cookie, onClose, showToast }) {
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async e => {
+    e.preventDefault()
+    if (!code.trim()) return
+    setBusy(true)
+    try {
+      const r = await api(`/cookies/${cookie.id}/linktv`, { method: 'POST', body: { code: code.trim() } })
+      showToast(r.message || 'TV linked')
+      onClose()
+    } catch (err) {
+      showToast(err.message)
+      setBusy(false) // keep the modal open on failure — the code may just have a typo
+    }
+  }
+  return (
+    <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={busy ? undefined : onClose}>
+      <form onClick={e => e.stopPropagation()} onSubmit={submit} className="bg-slate-800 rounded-xl p-6 w-full max-w-sm space-y-4">
+        <h2 className="text-lg font-bold">Link TV · #{cookie.id}</h2>
+        <p className="text-xs text-slate-400">
+          Enter the code shown on your TV ({cookie.service_key === 'netflix' ? 'netflix.com/tv8 — 8 ký tự' : 'Max — mã trên TV'}). Cookie: {cookie.label || cookie.service_key}
+        </p>
+        <input value={code} onChange={e => setCode(e.target.value.toUpperCase())} autoFocus disabled={busy}
+          placeholder="TV code" maxLength={12}
+          className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 font-mono text-center text-xl tracking-widest uppercase" />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={busy} className="rounded bg-slate-700 px-4 py-2 disabled:opacity-50">close</button>
+          <button disabled={busy || !code.trim()} className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold disabled:opacity-50">
+            {busy ? 'linking…' : 'submit'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function FamilyModal({ cookie, onClose, showToast }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api(`/cookies/${cookie.id}/family`, { method: 'POST' }).then(setData).catch(e => setErr(e.message))
+  }, [cookie.id])
+  const copyText = async (text, what) => {
+    try { await navigator.clipboard.writeText(text); showToast(`${what} copied`) }
+    catch { showToast('copy failed') }
+  }
+  return (
+    <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="bg-slate-800 rounded-xl p-6 w-full max-w-md space-y-4 max-h-[85vh] overflow-auto">
+        <h2 className="text-lg font-bold">Family · {cookie.label || `#${cookie.id}`}</h2>
+        {err && <p className="text-sm text-red-400">{err}</p>}
+        {!data && !err && <p className="text-sm text-slate-400">loading…</p>}
+        {data && (
+          <>
+            {data.addressUpdateRequired && (
+              <div className="rounded bg-amber-900/40 border border-amber-700 text-amber-300 px-3 py-2 text-xs">
+                Spotify requires the plan manager to update the family address before new members can join.
+              </div>
+            )}
+            <div>
+              <h3 className="text-xs font-semibold uppercase text-slate-400">Home address</h3>
+              {data.address ? (
+                <div className="flex items-start gap-2 mt-1">
+                  <p className="text-sm flex-1 break-all">{data.address}</p>
+                  <button onClick={() => copyText(data.address, 'address')} title="Copy address"
+                    className="rounded-lg p-1.5 text-slate-300 bg-slate-700/50 hover:bg-slate-700 shrink-0"><Copy className="w-4 h-4" /></button>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 mt-1">
+                  Hidden — only the plan manager's account sees it{data.isManager ? '' : ' (this account is a member)'}.
+                </p>
+              )}
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold uppercase text-slate-400">Invite link</h3>
+              {data.inviteLink ? (
+                <div className="flex items-start gap-2 mt-1">
+                  <p className="text-xs font-mono text-slate-300 flex-1 break-all">{data.inviteLink}</p>
+                  <button onClick={() => copyText(data.inviteLink, 'invite link')} title="Copy invite link"
+                    className="rounded-lg p-1.5 text-emerald-500 bg-emerald-600/20 hover:bg-emerald-600/30 shrink-0"><Link2 className="w-4 h-4" /></button>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 mt-1">
+                  No invite link — only the plan manager can invite{data.isManager ? '' : ' (this account is a member)'}.
+                </p>
+              )}
+              {data.inviteLink && (
+                <p className="text-[11px] text-slate-500 mt-1">The invitee must confirm this exact address to join.</p>
+              )}
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold uppercase text-slate-400">Members · {data.usedSeats}/{data.maxCapacity ?? '?'} used</h3>
+              <ul className="mt-1 space-y-1">
+                {data.members.map(m => (
+                  <li key={m.username} className="flex items-center gap-2 text-sm">
+                    <span className="truncate">{m.name}</span>
+                    {m.isYou && <span className="text-[10px] text-slate-400">(you)</span>}
+                    {m.isManager
+                      ? <span className="ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-600/30 text-emerald-300">manager</span>
+                      : <span className="ml-auto rounded px-1.5 py-0.5 text-[10px] font-semibold bg-slate-600/40 text-slate-300">member</span>}
+                    {m.country && <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold bg-sky-600/30 text-sky-300">{m.country}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        )}
+        <div className="flex justify-end">
+          <button onClick={onClose} className="rounded bg-slate-700 px-4 py-2">close</button>
+        </div>
+      </div>
     </div>
   )
 }
