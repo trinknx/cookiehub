@@ -115,6 +115,33 @@ describe('cookies api', () => {
     expect(st.body).toHaveProperty('running')
   })
 
+  it('remove-die deletes all die cookies across services; live/unknown untouched', async () => {
+    const seed = async (status, service = 'netflix') => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, service_key=? WHERE id=?').run(status, service, created[0].id)
+    }
+    await seed('die'); await seed('die'); await seed('live'); await seed('unknown'); await seed('die', 'spotify')
+    const r = await agent.post('/api/cookies/remove-die').send({}).expect(200)
+    expect(r.body).toEqual({ removed: 3 })
+    const list = await agent.get('/api/cookies').expect(200)
+    expect(list.body.total).toBe(2)
+    expect(list.body.items.map(i => i.status).sort()).toEqual(['live', 'unknown'])
+  })
+  it('remove-die scoped to one service only', async () => {
+    const seed = async (status, service) => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, service_key=? WHERE id=?').run(status, service, created[0].id)
+    }
+    await seed('die', 'netflix'); await seed('die', 'spotify')
+    const r = await agent.post('/api/cookies/remove-die').send({ service: 'netflix' }).expect(200)
+    expect(r.body).toEqual({ removed: 1 })
+    expect((await agent.get('/api/cookies?service=spotify&status=die')).body.total).toBe(1)
+    expect((await agent.get('/api/cookies?service=netflix')).body.total).toBe(0)
+  })
+  it('remove-die unknown service → 400', async () => {
+    await agent.post('/api/cookies/remove-die').send({ service: 'nope' }).expect(400)
+  })
+
   it('POST /:id/nftoken returns link+expires; unknown id → 404', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const r = await agent.post(`/api/cookies/${created[0].id}/nftoken`).expect(200)
@@ -132,13 +159,15 @@ describe('cookies api', () => {
 describe('services + settings api', () => {
   let agent
   beforeEach(async () => { agent = await login() })
-  it('lists services with counts; patch proxy/disabled', async () => {
+  it('lists services with counts incl liveCount; patch proxy/disabled', async () => {
     await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const list = await agent.get('/api/services').expect(200)
-    expect(list.body).toEqual([{ key: 'netflix', name: 'Netflix', disabled: 0, cookieCount: 1, proxy: null }])
+    expect(list.body).toEqual([{ key: 'netflix', name: 'Netflix', disabled: 0, cookieCount: 1, liveCount: 0, proxy: null }])
+    ctx.db.prepare("UPDATE cookies SET status='live'").run()
+    expect((await agent.get('/api/services').expect(200)).body[0]).toMatchObject({ liveCount: 1, cookieCount: 1 })
     await agent.patch('/api/services/netflix').send({ proxy: 'http://127.0.0.1:8080', disabled: true }).expect(200)
     const after = await agent.get('/api/services').expect(200)
-    expect(after.body[0]).toMatchObject({ disabled: 1, cookieCount: 1, proxy: 'http://127.0.0.1:8080' })
+    expect(after.body[0]).toMatchObject({ disabled: 1, cookieCount: 1, liveCount: 1, proxy: 'http://127.0.0.1:8080' })
     const row = await agent.get('/api/cookies/check-all').expect(200) // disabled excluded is engine-level; route must accept GET
     expect(row.body).toHaveProperty('running')
   })

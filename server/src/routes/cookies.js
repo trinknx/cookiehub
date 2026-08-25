@@ -99,6 +99,15 @@ export function cookieRoutes({ db, engine, adapters }) {
     } catch (e) { err(res, e.code || 'nftoken_failed', e.message, e.status || 500) }
   }))
 
+  r.post('/remove-die', (req, res) => {
+    const { service } = req.body || {}
+    if (service !== undefined && !adapters.has(service)) return err(res, 'unknown_service', `unknown service: ${service}`, 400)
+    const info = service
+      ? db.prepare("DELETE FROM cookies WHERE status='die' AND service_key=?").run(service)
+      : db.prepare("DELETE FROM cookies WHERE status='die'").run()
+    res.json({ removed: info.changes })
+  })
+
   r.post('/check-all', (req, res) => {
     try {
       res.json(engine.startCheckAll(req.body?.service || undefined))

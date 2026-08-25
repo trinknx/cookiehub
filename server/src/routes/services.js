@@ -5,14 +5,15 @@ const err = (res, code, message, status) => res.status(status).json({ error: { c
 export function serviceRoutes({ db, adapters }) {
   const r = Router()
   r.get('/', (req, res) => {
-    const counts = db.prepare('SELECT service_key, COUNT(*) c FROM cookies GROUP BY service_key').all()
+    const counts = db.prepare("SELECT service_key, COUNT(*) c, SUM(status='live') live FROM cookies GROUP BY service_key").all()
     const countMap = new Map(counts.map(x => [x.service_key, x.c]))
+    const liveMap = new Map(counts.map(x => [x.service_key, x.live ?? 0]))
     const settings = db.prepare('SELECT service_key, proxy, disabled FROM service_settings').all()
     const disabledMap = new Map(settings.map(x => [x.service_key, x.disabled]))
     const proxyMap = new Map(settings.map(x => [x.service_key, x.proxy]))
     res.json([...adapters.values()].map(a => ({
       key: a.key, name: a.name, disabled: disabledMap.get(a.key) ?? 0, cookieCount: countMap.get(a.key) ?? 0,
-      proxy: proxyMap.get(a.key) ?? null
+      liveCount: liveMap.get(a.key) ?? 0, proxy: proxyMap.get(a.key) ?? null
     })))
   })
   r.patch('/:key', (req, res) => {
