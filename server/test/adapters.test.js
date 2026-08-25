@@ -44,7 +44,7 @@ describe('netflix adapter', () => {
   ].join('\n')
   it('200 → live with account info from verified /account structure', async () => {
     const r = await netflix.check(ctxOf([
-      res(200, '{"userInfo":{"data":{"currentCountry":"IN"}}}'),
+      res(200, '<html><body>browse page — no reactContext here</body></html>'), // country must come from /account
       res(200, ACCOUNT_HTML)
     ]))
     expect(r.status).toBe('live')
@@ -56,9 +56,9 @@ describe('netflix adapter', () => {
       extra: { maxStreams: 1, videoQuality: 'HD720p' }
     })
   })
-  it('account fetch failure still → live, no accountInfo', async () => {
+  it('account fetch failure still → live, browse country must not leak', async () => {
     let call = 0
-    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async () => { if (call++ === 0) return res(200, ''); throw new Error('boom') } }
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async () => { if (call++ === 0) return res(200, '{"currentCountry":"US"}'); throw new Error('boom') } }
     const r = await netflix.check(ctx)
     expect(r.status).toBe('live')
     expect(r.accountInfo).toBeUndefined()

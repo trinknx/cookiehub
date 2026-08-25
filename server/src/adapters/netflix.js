@@ -75,9 +75,6 @@ export default {
     if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
     const info = {}
-    const home = await res.text().catch(() => '')
-    const country = home.match(/"currentCountry":"([A-Z]{2})"/)
-    if (country) info.country = country[1]
     try {
       const acc = await fetch('https://www.netflix.com/account', { headers: { 'user-agent': UA } })
       const html = await acc.text()
@@ -85,7 +82,8 @@ export default {
       // 1) a form-render model as ESCAPED JSON inside a JS string — raw bytes look
       //    like \"fieldType\":\"String\",\"value\":\"Basic\" — hence the \\" in the
       //    regexes; capture stops at the closing backslash.
-      // 2) plain reactContext JSON with unescaped quotes (emailAddress, memberSince).
+      // 2) plain reactContext JSON with unescaped quotes (emailAddress,
+      //    currentCountry, memberSince).
       // The old data-uia="plan-name" / "planName" / next-bill-date / "email" regexes
       // never matched the real page and are gone.
       const plan = html.match(/localizedPlanName\\":{\\"fieldType\\":\\"String\\",\\"value\\":\\"([^\\]+)/)
@@ -97,7 +95,9 @@ export default {
         if (streams) info.extra.maxStreams = Number(streams[1])
         if (quality) info.extra.videoQuality = quality[1]
       }
+      const country = html.match(/"currentCountry":"([A-Z]{2})"/)
       const email = html.match(/"emailAddress":"([^"]+)"/)
+      if (country) info.country = country[1]
       if (email) info.email = email[1]
       const since = html.match(/"memberSince":"([^"]+)"/)
       if (since) info.memberSince = since[1]
