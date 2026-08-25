@@ -20,9 +20,39 @@ describe('netflix adapter', () => {
     expect(r).toMatchObject({ status: 'die' })
     expect(r.reason).toContain('/login')
   })
-  it('3xx to non-login (locale/canonical/maintenance) → throws transient, not die', async () => {
-    await expect(netflix.check(ctxOf([res(302, '', { location: '/vi/' })]))).rejects.toThrow('transient redirect to /vi/')
-    await expect(netflix.check(ctxOf([res(301, '', { location: '/maintenance' })]))).rejects.toThrow('transient redirect to /maintenance')
+  it('3xx to non-login non-homepage (maintenance) → throws transient, not die', async () => {
+    await expect(netflix.check(ctxOf([
+      res(302, '', { location: '/maintenance' }),
+      res(200, '<html>maintenance page</html>')
+    ]))).rejects.toThrow('transient redirect to https://www.netflix.com/maintenance')
+  })
+  // Controller-verified live probe (2026-08-25, real dead cookie): a dead
+  // session /browse hops / → /vn-en/ → 200 marketing homepage. A chain that
+  // settles on the root or a locale homepage means NOT authenticated → die.
+  it('homepage chain /browse → / → /vn-en/ → 200 → die', async () => {
+    const r = await netflix.check(ctxOf([
+      res(302, '', { location: 'https://www.netflix.com/' }),
+      res(302, '', { location: '/vn-en/' }),
+      res(200, '<html>marketing homepage</html>')
+    ]))
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('not authenticated')
+  })
+  it('single-hop redirect to root homepage → die', async () => {
+    const r = await netflix.check(ctxOf([
+      res(302, '', { location: 'https://www.netflix.com/' }),
+      res(200, '<html>homepage</html>')
+    ]))
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('not authenticated')
+  })
+  it('locale-root redirect (/en-us/) → die', async () => {
+    const r = await netflix.check(ctxOf([
+      res(302, '', { location: '/en-us/' }),
+      res(200, '<html>homepage</html>')
+    ]))
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('not authenticated')
   })
   it('3xx login detection is case-insensitive', async () => {
     const r = await netflix.check(ctxOf([res(302, '', { location: 'https://www.netflix.com/vi/Login' })]))

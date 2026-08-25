@@ -65,16 +65,28 @@ export default {
   name: 'Netflix',
   defaultDomain: '.netflix.com',
   async check({ fetch, log }) {
-    const res = await fetch('https://www.netflix.com/browse', {
-      redirect: 'manual',
-      headers: { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
-    })
+    const HEADERS = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
+    let res = await fetch('https://www.netflix.com/browse', { redirect: 'manual', headers: HEADERS })
     if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get('location') || 'unknown'
-      // only a login redirect proves the session is dead — locale/canonical/maintenance
-      // redirects must not mass-flip valid cookies to die
-      if (loc.toLowerCase().includes('login')) return { status: 'die', reason: `redirected to ${loc}` }
-      throw new Error(`transient redirect to ${loc}`) // engine records 'error', status unchanged
+      // A logged-in /browse returns 200 directly (controller-verified live
+      // probe, 2026-08-25). Follow the chain manually: a 'login' location at
+      // any hop proves the session is dead, and a chain that settles on the
+      // root or a locale homepage (/, /vn-en/, /vi/) means the session is NOT
+      // authenticated — both are die. Anything else (maintenance page, loop,
+      // hop exhaustion) stays transient so valid cookies aren't mass-flipped.
+      const HOMEPAGE = /^\/([a-z]{2}(-[a-z]{2})?)?\/?$/
+      let lastLoc = null
+      for (let hop = 0; hop < 4 && res.status >= 300 && res.status < 400; hop++) {
+        const loc = res.headers.get('location')
+        if (!loc) break
+        if (loc.toLowerCase().includes('login')) return { status: 'die', reason: `redirected to ${loc}` }
+        lastLoc = new URL(loc, 'https://www.netflix.com').href
+        res = await fetch(lastLoc, { redirect: 'manual', headers: HEADERS })
+      }
+      if (res.status === 200 && lastLoc && HOMEPAGE.test(new URL(lastLoc).pathname)) {
+        return { status: 'die', reason: `redirected to ${lastLoc} (not authenticated)` }
+      }
+      throw new Error(`transient redirect to ${lastLoc || 'loop'}`) // engine records 'error', status unchanged
     }
     if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
