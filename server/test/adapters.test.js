@@ -54,6 +54,45 @@ describe('netflix adapter', () => {
     expect(r).toMatchObject({ status: 'die' })
     expect(r.reason).toContain('not authenticated')
   })
+  it('relative Location resolves against the issuing URL, not a fixed base', async () => {
+    let i = 0
+    const calls = []
+    const responses = [
+      res(302, '', { location: '/a/' }),
+      res(302, '', { location: 'next' }), // 'next' relative to /a/ → https://www.netflix.com/a/next
+      res(200, '<html>some page</html>')
+    ]
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async u => { calls.push(u); return responses[i++] } }
+    // /a/next is not a homepage path → transient, and the message proves the base used
+    await expect(netflix.check(ctx)).rejects.toThrow('transient redirect to https://www.netflix.com/a/next')
+    expect(calls[2]).toBe('https://www.netflix.com/a/next')
+  })
+  it('relative Location climbing to the homepage → die', async () => {
+    const r = await netflix.check(ctxOf([
+      res(302, '', { location: '/a/' }),
+      res(302, '', { location: '..' }), // resolves to https://www.netflix.com/
+      res(200, '<html>homepage</html>')
+    ]))
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('not authenticated')
+  })
+  it('4-hop budget exhausted on a terminal login redirect → die without a 5th fetch', async () => {
+    let i = 0
+    const calls = []
+    const responses = ['a1', 'a2', 'a3', 'a4'].map(l => res(302, '', { location: l }))
+      .concat(res(302, '', { location: 'https://www.netflix.com/login' }))
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async u => { calls.push(u); return responses[i++] } }
+    const r = await netflix.check(ctx)
+    expect(r).toMatchObject({ status: 'die' })
+    expect(r.reason).toContain('/login')
+    expect(calls.length).toBe(5) // /browse + 4 hops; the terminal login Location is inspected, not fetched
+  })
+  it('final 200 at path // is not a homepage → transient', async () => {
+    await expect(netflix.check(ctxOf([
+      res(302, '', { location: 'https://www.netflix.com//' }),
+      res(200, '<html>odd page</html>')
+    ]))).rejects.toThrow('transient redirect to https://www.netflix.com//')
+  })
   it('3xx login detection is case-insensitive', async () => {
     const r = await netflix.check(ctxOf([res(302, '', { location: 'https://www.netflix.com/vi/Login' })]))
     expect(r).toMatchObject({ status: 'die' })

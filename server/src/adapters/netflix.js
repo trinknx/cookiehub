@@ -66,7 +66,11 @@ export default {
   defaultDomain: '.netflix.com',
   async check({ fetch, log }) {
     const HEADERS = { 'user-agent': UA, 'accept-language': 'en-US,en;q=0.9' }
-    let res = await fetch('https://www.netflix.com/browse', { redirect: 'manual', headers: HEADERS })
+    // Root '/' or a locale root like /vn-en/, /vi/, /en-us/ — written as two
+    // alternatives so '//' (empty locale + trailing slash) cannot match.
+    const homepage = p => p === '/' || /^\/[a-z]{2}(-[a-z]{2})?\/?$/.test(p)
+    let currentUrl = 'https://www.netflix.com/browse'
+    let res = await fetch(currentUrl, { redirect: 'manual', headers: HEADERS })
     if (res.status >= 300 && res.status < 400) {
       // A logged-in /browse returns 200 directly (controller-verified live
       // probe, 2026-08-25). Follow the chain manually: a 'login' location at
@@ -74,16 +78,23 @@ export default {
       // root or a locale homepage (/, /vn-en/, /vi/) means the session is NOT
       // authenticated — both are die. Anything else (maintenance page, loop,
       // hop exhaustion) stays transient so valid cookies aren't mass-flipped.
-      const HOMEPAGE = /^\/([a-z]{2}(-[a-z]{2})?)?\/?$/
+      // Each hop's Location is resolved against the URL that ISSUED it.
       let lastLoc = null
       for (let hop = 0; hop < 4 && res.status >= 300 && res.status < 400; hop++) {
         const loc = res.headers.get('location')
         if (!loc) break
         if (loc.toLowerCase().includes('login')) return { status: 'die', reason: `redirected to ${loc}` }
-        lastLoc = new URL(loc, 'https://www.netflix.com').href
+        lastLoc = new URL(loc, currentUrl).href
+        currentUrl = lastLoc
         res = await fetch(lastLoc, { redirect: 'manual', headers: HEADERS })
       }
-      if (res.status === 200 && lastLoc && HOMEPAGE.test(new URL(lastLoc).pathname)) {
+      // Hop budget spent (or a Location-less 3xx): a terminal 3xx pointing at
+      // login still proves a dead session — die without a 5th fetch.
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location')
+        if (loc && loc.toLowerCase().includes('login')) return { status: 'die', reason: `redirected to ${loc}` }
+      }
+      if (res.status === 200 && lastLoc && homepage(new URL(lastLoc).pathname)) {
         return { status: 'die', reason: `redirected to ${lastLoc} (not authenticated)` }
       }
       throw new Error(`transient redirect to ${lastLoc || 'loop'}`) // engine records 'error', status unchanged
