@@ -32,6 +32,10 @@ export function createEngine({ db, adapters }) {
   const getServiceSetting = key =>
     db.prepare('SELECT proxy, disabled FROM service_settings WHERE service_key=?').get(key)
 
+  // remove-die / single delete can race an in-flight check: after the adapter
+  // resolves there may be no row left to update or log against
+  const cookieExists = db.prepare('SELECT 1 FROM cookies WHERE id=?')
+
   function buildDispatcher(proxyUrl) {
     if (!proxyUrl) return undefined
     if (dispatchers.has(proxyUrl)) return dispatchers.get(proxyUrl)
@@ -118,6 +122,9 @@ export function createEngine({ db, adapters }) {
       const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })
       const status = result.status === 'live' ? 'live' : 'die'
+      // deleted while the adapter was in flight — nothing to persist; returning the
+      // adapter's status keeps check-all done/failed accounting sane
+      if (!cookieExists.get(cookieId)) return status
       const now = Date.now()
       db.transaction(() => {
         if (status === 'live') {
@@ -131,6 +138,8 @@ export function createEngine({ db, adapters }) {
       })()
       return status
     } catch (e) {
+      // deleted mid-check — no row to record the attempt against either
+      if (!cookieExists.get(cookieId)) return 'error'
       const now = Date.now()
       // a real check attempt happened — record it even though it errored, so the UI
       // doesn't keep showing "never" after a failed attempt

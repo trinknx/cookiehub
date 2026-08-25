@@ -202,6 +202,40 @@ describe('engine', () => {
     await p
     expect(engine.jobStatus().activeIds).toEqual([])
   })
+
+  it('cookie deleted mid-check: success path resolves, no update, no log row', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'slow')
+    let release
+    const gate = new Promise(r => { release = r })
+    const slow = {
+      key: 'slow', name: 'Slow', defaultDomain: '.s.com',
+      check: async () => { await gate; return { status: 'live', reason: 'ok' } }
+    }
+    const engine = createEngine({ db, adapters: new Map([['slow', slow]]) })
+    const p = engine.runCheck(id)
+    db.prepare('DELETE FROM cookies WHERE id=?').run(id)
+    release()
+    await expect(p).resolves.toBe('live')
+    expect(db.prepare('SELECT * FROM cookies WHERE id=?').get(id)).toBeUndefined()
+    expect(db.prepare('SELECT * FROM check_logs WHERE cookie_id=?').all(id)).toHaveLength(0)
+  })
+  it('cookie deleted mid-check: error path resolves "error", no log row', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'slow')
+    let release
+    const gate = new Promise(r => { release = r })
+    const slow = {
+      key: 'slow', name: 'Slow', defaultDomain: '.s.com',
+      check: async () => { await gate; throw new Error('proxy unreachable') }
+    }
+    const engine = createEngine({ db, adapters: new Map([['slow', slow]]) })
+    const p = engine.runCheck(id)
+    db.prepare('DELETE FROM cookies WHERE id=?').run(id)
+    release()
+    await expect(p).resolves.toBe('error')
+    expect(db.prepare('SELECT * FROM check_logs WHERE cookie_id=?').all(id)).toHaveLength(0)
+  })
 })
 
 describe('mergeRequestHeaders', () => {
