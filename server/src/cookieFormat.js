@@ -3,26 +3,9 @@ export const MAX_CHUNKS = 500
 
 const isPlainObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-// End index of the balanced array span starting at src[start] ('['), or -1.
-// Brackets inside JSON string literals (with backslash escapes) don't count.
-function arraySpanEnd(src, start) {
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < src.length; i++) {
-    const c = src[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (c === '\\') escaped = true
-      else if (c === '"') inString = false
-      continue
-    }
-    if (c === '"') { inString = true; continue }
-    if (c === '[') depth++
-    else if (c === ']') { depth--; if (depth === 0) return i }
-  }
-  return -1
-}
+// Shared predicate for Cookie-Editor arrays: ≥1 member is an object with a truthy string name.
+const isValidCookieItem = it => isPlainObject(it) && typeof it.name === 'string' && it.name
+const hasNamedCookie = arr => Array.isArray(arr) && arr.some(isValidCookieItem)
 
 function tryParseArray(span) {
   try {
@@ -35,21 +18,43 @@ function tryParseArray(span) {
 // possibly pretty-printed inside seller files full of header junk) are the ONLY
 // thing that matters — when ≥1 array is found the surrounding text is discarded
 // entirely. With zero arrays, input falls back to legacy blank-line splitting.
+//
+// Single pass, O(n): candidate '[' positions stack up while string-aware
+// scanning (quotes/escapes only tracked inside a candidate, so junk-level
+// quotes can't desync the scan); a ']' pops its candidate and tests the span
+// with the same predicate detectFormat uses. An unmatched '[' costs one stack
+// push — never a rescan. On emit, enclosing candidates (which start in what is
+// now junk) are dropped so nested arrays are never double-extracted.
 export function splitBulk(text) {
   const src = String(text)
   const spans = []
+  const candidates = []
+  let inString = false
+  let escaped = false
   let i = 0
   while (i < src.length) {
-    if (src[i] === '[') {
-      const end = arraySpanEnd(src, i)
-      if (end !== -1) {
-        const span = src.slice(i, end + 1)
-        const parsed = tryParseArray(span)
-        if (parsed && isPlainObject(parsed[0])) {
-          spans.push(span)
-          i = end + 1
-          continue
-        }
+    const c = src[i]
+    if (!candidates.length) {
+      if (c === '[') candidates.push(i)
+      i++
+      continue
+    }
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      i++
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '[') candidates.push(i)
+    else if (c === ']') {
+      const start = candidates.pop()
+      const span = src.slice(start, i + 1)
+      if (hasNamedCookie(tryParseArray(span))) {
+        spans.push(span)
+        if (spans.length > MAX_CHUNKS) return spans // cap: route rejects > MAX_CHUNKS as too_many
+        candidates.length = 0
       }
     }
     i++
@@ -60,10 +65,7 @@ export function splitBulk(text) {
 
 export function detectFormat(chunk) {
   const trimmed = chunk.trim()
-  if (trimmed.startsWith('[')) {
-    const arr = tryParseArray(trimmed)
-    if (arr && arr.some(it => isPlainObject(it) && typeof it.name === 'string' && it.name)) return 'json'
-  }
+  if (trimmed.startsWith('[') && hasNamedCookie(tryParseArray(trimmed))) return 'json'
   for (let line of chunk.split('\n')) {
     if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length)
     if (!line.trim() || line.trim().startsWith('#')) continue
@@ -122,8 +124,7 @@ export function parseJsonArray(chunk, defaultDomain) {
   if (!Array.isArray(arr)) throw new Error('not a JSON array')
   const cookies = []
   for (const item of arr) {
-    if (!isPlainObject(item)) continue
-    if (typeof item.name !== 'string' || !item.name) continue
+    if (!isValidCookieItem(item)) continue
     cookies.push({
       domain: item.domain || defaultDomain,
       path: item.path || '/',

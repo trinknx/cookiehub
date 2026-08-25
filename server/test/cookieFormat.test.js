@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape } from '../src/cookieFormat.js'
+import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNKS } from '../src/cookieFormat.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tSecureSessionId\tabc123'
 const NET_HTTPONLY = '#HttpOnly_.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
@@ -159,6 +159,27 @@ describe('splitBulk JSON array extraction', () => {
     const parsed = parseJsonArray(chunks[0], '.x.com')
     expect(parsed[0].value).toBe('a]b')
     expect(parsed[1].value).toBe('esc"aped]')
+  })
+  it('extraction predicate matches detection: valid cookie need not be element 0', () => {
+    const span = '[null,{"name":"a","value":"1"}]'
+    expect(splitBulk(`junk\n${span}`)).toEqual([span])
+    expect(detectFormat(span)).toBe('json')
+  })
+  it('nested spans are not double-extracted', () => {
+    expect(splitBulk('[[{"name":"a","value":"1"}],{"name":"b","value":"2"}]')).toEqual(['[{"name":"a","value":"1"}]'])
+  })
+  it('stops extracting after MAX_CHUNKS + 1 spans', () => {
+    const span = '[{"name":"a","value":"1"}]'
+    const text = Array(MAX_CHUNKS + 2).fill(span).join('\njunk\n')
+    const chunks = splitBulk(text)
+    expect(chunks).toHaveLength(MAX_CHUNKS + 1)
+    expect(chunks.every(c => c === span)).toBe(true)
+  })
+  it('200KB of unmatched brackets stays linear (perf regression)', () => {
+    const hostile = `${'['.repeat(200000)}\n\n${NET}`
+    const chunks = splitBulk(hostile)
+    expect(chunks).toHaveLength(2)
+    expect(chunks[1]).toBe(NET)
   })
   it('pure legacy text with no JSON spans still splits on blank lines', () => {
     expect(splitBulk('NetflixId=a\n\nNetflixId=b; SecureSessionId=c')).toEqual(['NetflixId=a', 'NetflixId=b; SecureSessionId=c'])
