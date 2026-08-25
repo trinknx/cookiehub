@@ -29,13 +29,15 @@ describe('netflix adapter', () => {
     expect(r).toMatchObject({ status: 'die' })
     expect(r.reason).toContain('/vi/Login')
   })
-  // Verbatim escaped-JSON fragment captured from a live /account response
-  // (2026-08-25): the form-render model is embedded as escaped JSON inside a
-  // JS string, so raw bytes contain backslash-quotes. String.raw keeps them.
-  const ESCAPED_FORM_MODEL = String.raw`\"currentPlan\":{\"fieldType\":\"Group\",\"fieldGroup\":\"MemberPlan\",\"fields\":{\"localizedPlanName\":{\"fieldType\":\"String\",\"value\":\"Basic\"},\"maxStreams\":{\"fieldType\":\"Numeric\",\"value\":1},\"videoQuality\":{\"fieldType\":\"String\",\"value\":\"HD720p\"},\"planId\":{\"fieldType\":\"String\",\"value\":\"4001\"},\"hasAds\":{\"fieldType\":\"Boolean\",\"value\":false}},\"memberSince\":{\"fieldType\":\"Numeric\",\"value\":1773158336000}`
+  // Real /account bytes (verified char-by-char against a live US page, 2026-08-25):
+  // the form-render model is embedded as PLAIN-quote JSON — no backslash escapes
+  // anywhere. reactContext string values DO carry JS hex escapes (\x40 = @,
+  // \x20 = space) that must be unescaped before storing; String.raw keeps them.
+  const FORM_MODEL = '"currentPlan":{"fieldType":"Group","fieldGroup":"MemberPlan","fields":{"localizedPlanName":{"fieldType":"String","value":"Standard"},"maxStreams":{"fieldType":"Numeric","value":2},"videoQuality":{"fieldType":"String","value":"HD"},"planId":{"fieldType":"String","value":"10341"},"hasAds":{"fieldType":"Boolean","value":false}},"memberSince":{"fieldType":"Numeric","value":1701993600000}'
+  const REACT_CONTEXT = String.raw`"name":"Himachandan","emailAddress":"mikekugler1\x40gmail.com","currentCountry":"US","memberSince":"December\x202023"`
   const ACCOUNT_HTML = [
-    '<script>reactContext = {"userInfo":{"data":{"name":"Himachandan","emailAddress":"himachandan08@gmail.com","currentCountry":"IN","memberSince":"March 2026"}}};</script>',
-    `<script>var formModel = "${ESCAPED_FORM_MODEL}";</script>`,
+    `<script>reactContext = {"userInfo":{"data":{${REACT_CONTEXT}}}};</script>`,
+    `<script type="application/json">${FORM_MODEL}</script>`,
     // decoys: marketing copy + the old (dead) data-uia hooks must not leak in
     '<div data-uia="plan-name"><div>Premium</div></div>',
     '<div data-uia="next-bill-date">August 30, 2026</div>',
@@ -49,11 +51,11 @@ describe('netflix adapter', () => {
     ]))
     expect(r.status).toBe('live')
     expect(r.accountInfo).toEqual({
-      country: 'IN',
-      plan: 'Basic',
-      email: 'himachandan08@gmail.com',
-      memberSince: 'March 2026',
-      extra: { maxStreams: 1, videoQuality: 'HD720p' }
+      plan: 'Standard',
+      email: 'mikekugler1@gmail.com',
+      country: 'US',
+      memberSince: 'December 2023',
+      extra: { maxStreams: 2, videoQuality: 'HD' }
     })
   })
   it('account fetch failure still → live, browse country must not leak', async () => {

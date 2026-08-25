@@ -1,5 +1,9 @@
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
+// reactContext string values embed JS hex escapes (verified on a live US page:
+// "mikekugler1\x40gmail.com", "December\x202023") — unescape before storing.
+const unhex = s => s.replace(/\\x([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+
 // Netflix iOS app (Argo) shakti call that mints a short-lived (~1h) nftoken;
 // https://netflix.com/?nftoken=… logs the session straight in. Values captured
 // verbatim from a live Argo 15.48.1 request — the server is picky about them.
@@ -78,29 +82,30 @@ export default {
     try {
       const acc = await fetch('https://www.netflix.com/account', { headers: { 'user-agent': UA } })
       const html = await acc.text()
-      // /account embeds TWO data sources (verified against a live page, 2026-08-25):
-      // 1) a form-render model as ESCAPED JSON inside a JS string — raw bytes look
-      //    like \"fieldType\":\"String\",\"value\":\"Basic\" — hence the \\" in the
-      //    regexes; capture stops at the closing backslash.
-      // 2) plain reactContext JSON with unescaped quotes (emailAddress,
-      //    currentCountry, memberSince).
+      // /account embeds TWO data sources (verified char-by-char against a live
+      // US page, 2026-08-25):
+      // 1) a form-render model as PLAIN-quote JSON — raw bytes look like
+      //    "localizedPlanName":{"fieldType":"String","value":"Standard"} — no
+      //    backslash escaping (earlier regexes assumed \" bytes and never matched).
+      // 2) reactContext JSON whose string values may contain \xNN hex escapes,
+      //    unescaped via unhex() (emailAddress, currentCountry, memberSince).
       // The old data-uia="plan-name" / "planName" / next-bill-date / "email" regexes
       // never matched the real page and are gone.
-      const plan = html.match(/localizedPlanName\\":{\\"fieldType\\":\\"String\\",\\"value\\":\\"([^\\]+)/)
-      if (plan) info.plan = plan[1]
-      const streams = html.match(/maxStreams\\":{\\"fieldType\\":\\"Numeric\\",\\"value\\":(\d+)/)
-      const quality = html.match(/videoQuality\\":{\\"fieldType\\":\\"String\\",\\"value\\":\\"([^\\]+)/)
+      const plan = html.match(/localizedPlanName":{"fieldType":"String","value":"([^"]+)"/)
+      if (plan) info.plan = unhex(plan[1])
+      const streams = html.match(/maxStreams":{"fieldType":"Numeric","value":(\d+)/)
+      const quality = html.match(/videoQuality":{"fieldType":"String","value":"([^"]+)"/)
       if (streams || quality) {
         info.extra = {}
         if (streams) info.extra.maxStreams = Number(streams[1])
-        if (quality) info.extra.videoQuality = quality[1]
+        if (quality) info.extra.videoQuality = unhex(quality[1])
       }
       const country = html.match(/"currentCountry":"([A-Z]{2})"/)
       const email = html.match(/"emailAddress":"([^"]+)"/)
       if (country) info.country = country[1]
-      if (email) info.email = email[1]
+      if (email) info.email = unhex(email[1])
       const since = html.match(/"memberSince":"([^"]+)"/)
-      if (since) info.memberSince = since[1]
+      if (since) info.memberSince = unhex(since[1])
     } catch (e) { log(`account info fetch failed: ${e.message}`) }
     return { status: 'live', reason: 'logged in', accountInfo: Object.keys(info).length ? info : undefined }
   },
