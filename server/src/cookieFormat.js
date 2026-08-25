@@ -40,7 +40,14 @@ export function splitBulk(text) {
       continue
     }
     if (inString) {
-      if (escaped) escaped = false
+      if (c === '\n' || c === '\r') {
+        // raw newline inside a JSON string = malformed candidate; abort it and
+        // resync so later '[' positions are reconsidered (no masking)
+        candidates.pop()
+        inString = false
+        escaped = false
+      }
+      else if (escaped) escaped = false
       else if (c === '\\') escaped = true
       else if (c === '"') inString = false
       i++

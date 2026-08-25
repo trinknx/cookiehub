@@ -168,6 +168,12 @@ describe('splitBulk JSON array extraction', () => {
   it('nested spans are not double-extracted', () => {
     expect(splitBulk('[[{"name":"a","value":"1"}],{"name":"b","value":"2"}]')).toEqual(['[{"name":"a","value":"1"}]'])
   })
+  it('resyncs after an unterminated string candidate so later arrays are not masked', () => {
+    const span = '[{"name":"a","value":"1"}]'
+    expect(splitBulk(`junk ["unterminated\n${span}`)).toEqual([span])
+    expect(splitBulk(`junk ["esc\\\n${span}`)).toEqual([span])
+    expect(splitBulk(`junk ["unterminated\r${span}`)).toEqual([span])
+  })
   it('stops extracting after MAX_CHUNKS + 1 spans', () => {
     const span = '[{"name":"a","value":"1"}]'
     const text = Array(MAX_CHUNKS + 2).fill(span).join('\njunk\n')
