@@ -1,11 +1,71 @@
 export const MAX_CHUNK_BYTES = 100 * 1024
-export const MAX_CHUNKS = 100
+export const MAX_CHUNKS = 500
 
+const isPlainObject = v => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+// End index of the balanced array span starting at src[start] ('['), or -1.
+// Brackets inside JSON string literals (with backslash escapes) don't count.
+function arraySpanEnd(src, start) {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < src.length; i++) {
+    const c = src[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') { inString = true; continue }
+    if (c === '[') depth++
+    else if (c === ']') { depth--; if (depth === 0) return i }
+  }
+  return -1
+}
+
+function tryParseArray(span) {
+  try {
+    const v = JSON.parse(span)
+    return Array.isArray(v) ? v : null
+  } catch { return null }
+}
+
+// Bulk split: balanced JSON arrays (Cookie-Editor exports, possibly pretty-printed
+// inside seller files full of header junk) are extracted first as single chunks;
+// the remaining text falls back to blank-line splitting.
 export function splitBulk(text) {
-  return String(text).split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)
+  const src = String(text)
+  const spans = []
+  const outside = []
+  let plainStart = 0
+  let i = 0
+  while (i < src.length) {
+    if (src[i] === '[') {
+      const end = arraySpanEnd(src, i)
+      if (end !== -1) {
+        const span = src.slice(i, end + 1)
+        const parsed = tryParseArray(span)
+        if (parsed && (parsed.length === 0 || isPlainObject(parsed[0]))) {
+          outside.push(src.slice(plainStart, i))
+          if (parsed.length > 0) spans.push(span)
+          i = plainStart = end + 1
+          continue
+        }
+      }
+    }
+    i++
+  }
+  outside.push(src.slice(plainStart))
+  return [...spans, ...outside.join('').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)]
 }
 
 export function detectFormat(chunk) {
+  const trimmed = chunk.trim()
+  if (trimmed.startsWith('[')) {
+    const arr = tryParseArray(trimmed)
+    if (arr && arr.some(it => isPlainObject(it) && typeof it.name === 'string' && it.name)) return 'json'
+  }
   for (let line of chunk.split('\n')) {
     if (line.startsWith('#HttpOnly_')) line = line.slice('#HttpOnly_'.length)
     if (!line.trim() || line.trim().startsWith('#')) continue
@@ -55,6 +115,28 @@ export function parseHeader(chunk, defaultDomain) {
     cookies.push({ domain: defaultDomain, path: '/', secure: true, httpOnly: false, expiration: null, name, value })
   }
   if (!cookies.length) throw new Error('no cookie pairs found')
+  return cookies
+}
+
+export function parseJsonArray(chunk, defaultDomain) {
+  let arr
+  try { arr = JSON.parse(String(chunk).trim()) } catch { throw new Error('invalid JSON array') }
+  if (!Array.isArray(arr)) throw new Error('not a JSON array')
+  const cookies = []
+  for (const item of arr) {
+    if (!isPlainObject(item)) continue
+    if (typeof item.name !== 'string' || !item.name) continue
+    cookies.push({
+      domain: item.domain || defaultDomain,
+      path: item.path || '/',
+      secure: !!item.secure,
+      httpOnly: !!item.httpOnly,
+      expiration: Number.isFinite(item.expirationDate) ? Math.round(item.expirationDate * 1000) : null,
+      name: item.name,
+      value: String(item.value ?? '')
+    })
+  }
+  if (!cookies.length) throw new Error('no valid cookies in JSON array')
   return cookies
 }
 

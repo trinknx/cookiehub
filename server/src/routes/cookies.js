@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { encryptJSON, decryptJSON } from '../crypto.js'
 import { aw } from '../asyncHandler.js'
-import { splitBulk, detectFormat, parseNetscape, parseHeader, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
+import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
 const PUBLIC_COLS = 'id, service_key, label, source_format, status, account_info, last_checked_at, notes, created_at, updated_at'
@@ -45,7 +45,7 @@ export function cookieRoutes({ db, engine, adapters }) {
         if (Buffer.byteLength(chunk) > MAX_CHUNK_BYTES) throw new Error('chunk exceeds 100KB')
         const format = detectFormat(chunk)
         if (!format) throw new Error('unrecognized cookie format')
-        const cookies = format === 'netscape' ? parseNetscape(chunk, adapter.defaultDomain) : parseHeader(chunk, adapter.defaultDomain)
+        const cookies = format === 'netscape' ? parseNetscape(chunk, adapter.defaultDomain) : format === 'json' ? parseJsonArray(chunk, adapter.defaultDomain) : parseHeader(chunk, adapter.defaultDomain)
         const info = insert.run(service, label, encryptJSON(cookies), format, notes, now, now)
         const row = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies WHERE id=?`).get(info.lastInsertRowid)
         created.push({ ...row, account_info: row.account_info ? JSON.parse(row.account_info) : null })

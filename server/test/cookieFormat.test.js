@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitBulk, detectFormat, parseNetscape, parseHeader, toHeaderString, toNetscape } from '../src/cookieFormat.js'
+import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape } from '../src/cookieFormat.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tSecureSessionId\tabc123'
 const NET_HTTPONLY = '#HttpOnly_.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
@@ -10,6 +10,69 @@ describe('splitBulk', () => {
     expect(splitBulk('a\n\n\nb\n   \nc')).toEqual(['a', 'b', 'c'])
   })
 })
+
+const JSON_ARR_1 = `[
+  {
+    "name": "NetflixId",
+    "value": "synthetic-v-2",
+    "domain": ".netflix.com",
+    "hostOnly": false,
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "no_restriction",
+    "session": false,
+    "expirationDate": 1790000000.5
+  },
+  {
+    "name": "SecureSessionId",
+    "value": "synthetic-abc123",
+    "domain": ".netflix.com",
+    "hostOnly": false,
+    "path": "/",
+    "secure": true,
+    "httpOnly": false,
+    "sameSite": "unspecified",
+    "session": false,
+    "expirationDate": 1807091768
+  }
+]`
+const JSON_ARR_2 = `[
+  {
+    "name": "dsca",
+    "value": "synthetic-2",
+    "domain": ".netflix.com",
+    "hostOnly": false,
+    "path": "/",
+    "secure": true,
+    "httpOnly": false,
+    "sameSite": "no_restriction",
+    "session": false,
+    "expirationDate": 1817141125
+  }
+]`
+const MIXED_FILE = [
+  '═════════════════════════════════',
+  'NETFLIX ACCOUNT DETAILS  ::  #1 of 298',
+  'BY: synthetic.example',
+  '– Name: Tester One',
+  '– Email: tester1@example.com',
+  '– Plan: Basic',
+  '',
+  'COOKIE (browser import — paste into the Cookie-Editor extension):',
+  JSON_ARR_1,
+  '═════════════════════════════════',
+  '',
+  '████████████████████████████████',
+  '',
+  '═════════════════════════════════',
+  'NETFLIX ACCOUNT DETAILS  ::  #2 of 298',
+  '– Email: tester2@example.com',
+  JSON_ARR_2,
+  '═════════════════════════════════',
+  '',
+  'NetflixId=hdr-synthetic; SecureSessionId=hdr-synthetic-2'
+].join('\n')
 
 describe('detectFormat', () => {
   it('detects netscape', () => expect(detectFormat(NET)).toBe('netscape'))
@@ -80,5 +143,68 @@ describe('converters', () => {
   it('exports expiration 0 as epoch 0', () => {
     const out = toNetscape([{ domain: '.x.com', path: '/', secure: true, httpOnly: false, expiration: 0, name: 'a', value: '1' }])
     expect(Number(out.split('\n')[1].split('\t')[4])).toBe(0)
+  })
+})
+
+describe('splitBulk JSON array extraction', () => {
+  it('extracts 2 JSON arrays + 1 header chunk from a mixed seller file', () => {
+    const chunks = splitBulk(MIXED_FILE)
+    expect(chunks.filter(c => detectFormat(c) === 'json')).toHaveLength(2)
+    const headerChunks = chunks.filter(c => detectFormat(c) === 'header')
+    expect(headerChunks).toEqual(['NetflixId=hdr-synthetic; SecureSessionId=hdr-synthetic-2'])
+    expect(chunks[0]).toBe(JSON_ARR_1)
+    expect(chunks[1]).toBe(JSON_ARR_2)
+  })
+  it('brackets inside JSON string values do not break span extraction', () => {
+    const span = '[{"name": "a", "value": "a]b"}, {"name": "q", "value": "esc\\"aped]"}]'
+    const chunks = splitBulk(`junk line\n${span}\nmore junk`)
+    expect(chunks[0]).toBe(span)
+    const parsed = parseJsonArray(chunks[0], '.x.com')
+    expect(parsed[0].value).toBe('a]b')
+    expect(parsed[1].value).toBe('esc"aped]')
+  })
+  it('skips empty arrays and leaves non-object arrays as plain text', () => {
+    expect(splitBulk('[]')).toEqual([])
+    expect(splitBulk('before [1,2] after')).toEqual(['before [1,2] after'])
+  })
+  it('unbalanced bracket leaves text exactly as today', () => {
+    expect(splitBulk('a=1\n[not json')).toEqual(['a=1\n[not json'])
+  })
+})
+
+describe('detectFormat json', () => {
+  it('detects cookie-editor json arrays', () => {
+    expect(detectFormat('[{"name":"a","value":"1"}]')).toBe('json')
+    expect(detectFormat(JSON_ARR_1)).toBe('json')
+  })
+  it('empty or scalar arrays are not json', () => {
+    expect(detectFormat('[]')).toBe(null)
+    expect(detectFormat('[1,2]')).toBe(null)
+  })
+})
+
+describe('parseJsonArray', () => {
+  it('maps cookie-editor fields to canonical cookies', () => {
+    const c = parseJsonArray(JSON_ARR_1, '.netflix.com')
+    expect(c).toHaveLength(2)
+    expect(c[0]).toEqual({
+      domain: '.netflix.com', path: '/', secure: true, httpOnly: true,
+      expiration: 1790000000500, name: 'NetflixId', value: 'synthetic-v-2'
+    })
+    expect(c[0]).not.toHaveProperty('hostOnly')
+    expect(c[0]).not.toHaveProperty('sameSite')
+    expect(c[0]).not.toHaveProperty('session')
+    expect(c[1].httpOnly).toBe(false)
+  })
+  it('defaults missing domain and missing expiration', () => {
+    const c = parseJsonArray('[{"name":"a","value":"1","path":"/deep"}]', '.x.com')
+    expect(c[0]).toEqual({ domain: '.x.com', path: '/deep', secure: false, httpOnly: false, expiration: null, name: 'a', value: '1' })
+  })
+  it('skips nameless items and throws when none survive', () => {
+    expect(parseJsonArray('[{"value":"1"},5,"x",{"name":"keep","value":"v"}]', '.x.com')).toHaveLength(1)
+    expect(() => parseJsonArray('[{"value":"1"},5]', '.x.com')).toThrow('no valid cookies in JSON array')
+  })
+  it('round-trips through toHeaderString', () => {
+    expect(toHeaderString(parseJsonArray('[{"name":"a","value":"1"},{"name":"b","value":"2"}]', '.x.com'))).toBe('a=1; b=2')
   })
 })

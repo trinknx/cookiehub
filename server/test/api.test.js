@@ -44,6 +44,16 @@ describe('cookies api', () => {
     expect(res.body.created).toHaveLength(1)
     expect(res.body.failed).toEqual([{ index: 1, error: expect.stringContaining('format') }])
   })
+  it('bulk import: cookie-editor json arrays mixed with junk text', async () => {
+    const json1 = '[{"name":"NetflixId","value":"syn-1","domain":".netflix.com","path":"/","secure":true,"httpOnly":false,"hostOnly":false,"sameSite":"no_restriction","session":false,"expirationDate":1790000000}]'
+    const json2 = '[{"name":"SecureSessionId","value":"syn-2","domain":".netflix.com","path":"/","secure":true,"httpOnly":false,"hostOnly":false,"sameSite":"no_restriction","session":false,"expirationDate":1807091768}]'
+    const content = `NETFLIX ACCOUNT DETAILS  ::  #1 of 298\n– Email: tester1@example.com\n${json1}\n═════════════════════════════════\n\n${json2}\n═════════════════════════════════`
+    const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
+    expect(res.body.created).toHaveLength(2)
+    expect(res.body.created.every(c => c.source_format === 'json')).toBe(true)
+    const h = await agent.get(`/api/cookies/${res.body.created[0].id}/export?format=header`).expect(200)
+    expect(h.body.content).toContain('NetflixId=syn-1')
+  })
   it('unknown service → 400', async () => {
     await agent.post('/api/cookies').send({ service: 'nope', content: HDR }).expect(400)
   })

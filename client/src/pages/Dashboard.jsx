@@ -173,9 +173,10 @@ function AddModal({ services, onClose, onDone, showToast }) {
             className="flex-1 rounded bg-slate-900 border border-slate-700 px-3 py-2" />
         </div>
         <textarea value={content} onChange={e => setContent(e.target.value)} rows={10} required
-          placeholder="Paste cookie (Netscape or header string). Bulk: separate cookies with a blank line."
+          placeholder="Netscape, header string (k=v; k=v), or Cookie-Editor JSON — bulk: separate sets with a blank line."
           className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 font-mono text-xs" />
         <div className="flex gap-2 justify-end">
+          <label className="mr-auto cursor-pointer rounded bg-slate-700 hover:bg-slate-600 px-4 py-2 text-sm">Choose file<input type="file" accept=".txt,.json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (!f) return; f.text().then(setContent) }} /></label>
           <button type="button" onClick={close} className="rounded bg-slate-700 px-4 py-2">close</button>
           <button className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold">import</button>
         </div>
