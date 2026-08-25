@@ -51,6 +51,56 @@ describe('netflix adapter', () => {
   })
 })
 
+describe('netflix nftoken', () => {
+  const COOKIES = [
+    { name: 'cl', value: 'h', domain: '.netflix.com' },
+    { name: 'NetflixId', value: 'v%3D-1', domain: '.netflix.com' },
+    { name: 'SecureNetflixId', value: 'v-2', domain: '.netflix.com' },
+    { name: 'nfvdid', value: 'd-1', domain: '.netflix.com' },
+    { name: 'rememberMe', value: 'x', domain: '.netflix.com' }
+  ]
+  const okBody = token => ({ ok: true, status: 200, json: async () => ({ value: { account: { token: { default: { token, expires: 1790000000000 } } } } }) })
+
+  it('requests the Argo endpoint and returns link+expires', async () => {
+    const calls = []
+    const fetch = async (url, init) => { calls.push({ url, init }); return okBody('tök=en&+') }
+    const r = await netflix.nftoken({ cookies: COOKIES, fetch, log: () => {} })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toContain('https://ios.prod.ftl.netflix.com/iosui/user/15.48?')
+    expect(calls[0].url).toContain('account%22%2C%22token')
+    expect(calls[0].url).toContain('esn=NFAPPL-02-IPHONE8%3D1-')
+    expect(calls[0].url).toContain('pathFormat=graph')
+    // Argo headers win over the engine's browser defaults
+    expect(calls[0].init.headers['user-agent']).toContain('Argo/15.48.1')
+    expect(calls[0].init.headers['x-netflix.client.type']).toBe('argo')
+    // only the three auth cookies go out
+    expect(calls[0].init.headers.cookie).toBe('NetflixId=v%3D-1; SecureNetflixId=v-2; nfvdid=d-1')
+    expect(r).toEqual({ link: 'https://netflix.com/?nftoken=' + encodeURIComponent('tök=en&+'), expires: 1790000000000 })
+  })
+  it('missing NetflixId → throws before any fetch', async () => {
+    const calls = []
+    const fetch = async (url, init) => { calls.push({ url, init }); return okBody('t') }
+    await expect(netflix.nftoken({ cookies: [{ name: 'nfvdid', value: 'x' }], fetch, log: () => {} }))
+      .rejects.toThrow('NetflixId cookie missing')
+    expect(calls).toHaveLength(0)
+  })
+  it('empty cookies → throws before any fetch', async () => {
+    let called = false
+    const fetch = async () => { called = true; return okBody('t') }
+    await expect(netflix.nftoken({ cookies: [], fetch, log: () => {} })).rejects.toThrow('NetflixId cookie missing')
+    expect(called).toBe(false)
+  })
+  it('non-ok HTTP → throws with status', async () => {
+    const fetch = async () => ({ ok: false, status: 403, json: async () => ({}) })
+    await expect(netflix.nftoken({ cookies: COOKIES, fetch, log: () => {} })).rejects.toThrow('nftoken HTTP 403')
+  })
+  it('response without token → throws (dead cookie)', async () => {
+    const fetch = async () => ({ ok: true, status: 200, json: async () => ({ value: { account: {} } }) })
+    await expect(netflix.nftoken({ cookies: COOKIES, fetch, log: () => {} }))
+      .rejects.toThrow('no nftoken in response')
+  })
+})
+
 describe('spotify adapter', () => {
   it('401 → die', async () => {
     const r = await spotify.check(ctxOf([res(401)]))

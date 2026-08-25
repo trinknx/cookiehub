@@ -93,6 +93,12 @@ export function cookieRoutes({ db, engine, adapters }) {
     } catch (e) { err(res, e.code || 'check_failed', e.message, e.status || 500) }
   }))
 
+  r.post('/:id/nftoken', aw(async (req, res) => {
+    try {
+      res.json(await engine.getNftoken(Number(req.params.id)))
+    } catch (e) { err(res, e.code || 'nftoken_failed', e.message, e.status || 500) }
+  }))
+
   r.post('/check-all', (req, res) => {
     try {
       res.json(engine.startCheckAll(req.body?.service || undefined))

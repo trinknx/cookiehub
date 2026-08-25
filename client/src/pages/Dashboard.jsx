@@ -43,7 +43,8 @@ export default function Dashboard() {
       try {
         const st = await api('/cookies/check-all')
         setJob(st)
-        if (!st.running) { load().catch(() => {}); showToast(`Check all done: ${st.done} checked, ${st.failed} errors`) }
+        load().catch(() => {}) // refresh list so landed statuses appear immediately
+        if (!st.running) showToast(`Check all done: ${st.done} checked, ${st.failed} errors`)
       } catch (err) {
         clearInterval(pollRef.current)
         setJob(null)
@@ -60,6 +61,14 @@ export default function Dashboard() {
   const checkAll = async () => {
     try { const r = await api('/cookies/check-all', { method: 'POST', body: fService ? { service: fService } : {} }); setJob({ running: true, pending: r.queued, done: 0, failed: 0 }) }
     catch (e) { showToast(e.message) }
+  }
+
+  const copyNft = async id => {
+    try {
+      const r = await api(`/cookies/${id}/nftoken`, { method: 'POST' })
+      await navigator.clipboard.writeText(r.link)
+      showToast('nftoken link copied (valid ~1h)')
+    } catch (e) { showToast(e.message) }
   }
   const copy = async (id, format) => {
     try {
@@ -107,23 +116,33 @@ export default function Dashboard() {
             <tr><th className="p-3">Label</th><th className="p-3">Service</th><th className="p-3">Status</th><th className="p-3">Account</th><th className="p-3">Checked</th><th className="p-3">Actions</th></tr>
           </thead>
           <tbody>
-            {items.map(c => (
-              <tr key={c.id} className="border-t border-slate-800 hover:bg-slate-800/40">
-                <td className="p-3 cursor-pointer" onClick={() => setDetail(c)}>{c.label || <span className="text-slate-500">#{c.id}</span>}</td>
-                <td className="p-3">{c.service_key}</td>
-                <td className="p-3"><span className={`${STATUS_STYLE[c.status]} text-white text-xs font-bold rounded px-2 py-0.5 uppercase`}>{c.status}</span></td>
-                <td className="p-3 text-slate-300">
-                  {c.account_info ? [c.account_info.email, c.account_info.plan, c.account_info.country, c.account_info.expiresAt].filter(Boolean).join(' · ') : '—'}
-                </td>
-                <td className="p-3 text-slate-400">{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : 'never'}</td>
-                <td className="p-3 space-x-1 whitespace-nowrap">
-                  <button onClick={() => checkOne(c.id)} className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">check</button>
-                  <button onClick={() => copy(c.id, 'header')} className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">copy hdr</button>
-                  <button onClick={() => copy(c.id, 'netscape')} className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">copy net</button>
-                  <button onClick={() => remove(c.id)} className="rounded bg-red-900/60 hover:bg-red-800 px-2 py-1">del</button>
-                </td>
-              </tr>
-            ))}
+            {items.map(c => {
+              const checking = job?.running && job.activeIds?.includes(c.id)
+              return (
+                <tr key={c.id} className="border-t border-slate-800 hover:bg-slate-800/40">
+                  <td className="p-3 cursor-pointer" onClick={() => setDetail(c)}>{c.label || <span className="text-slate-500">#{c.id}</span>}</td>
+                  <td className="p-3">{c.service_key}</td>
+                  <td className="p-3">{checking
+                    ? <span className="bg-amber-500 animate-pulse text-white text-xs font-bold rounded px-2 py-0.5 uppercase">checking…</span>
+                    : <span className={`${STATUS_STYLE[c.status]} text-white text-xs font-bold rounded px-2 py-0.5 uppercase`}>{c.status}</span>}</td>
+                  <td className="p-3 text-slate-300">
+                    {c.account_info ? [c.account_info.email, c.account_info.plan, c.account_info.country, c.account_info.expiresAt].filter(Boolean).join(' · ') : '—'}
+                  </td>
+                  <td className="p-3 text-slate-400">{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : 'never'}</td>
+                  <td className="p-3 space-x-1 whitespace-nowrap">
+                    <button onClick={() => checkOne(c.id)} disabled={checking} title={checking ? 'check in progress' : undefined}
+                      className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1 disabled:opacity-40">check</button>
+                    {c.service_key === 'netflix' && (
+                      <button onClick={() => copyNft(c.id)} title="copy nftoken login link"
+                        className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">nft</button>
+                    )}
+                    <button onClick={() => copy(c.id, 'header')} className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">copy hdr</button>
+                    <button onClick={() => copy(c.id, 'netscape')} className="rounded bg-slate-700 hover:bg-slate-600 px-2 py-1">copy net</button>
+                    <button onClick={() => remove(c.id)} className="rounded bg-red-900/60 hover:bg-red-800 px-2 py-1">del</button>
+                  </td>
+                </tr>
+              )
+            })}
             {!items.length && <tr><td colSpan="6" className="p-6 text-center text-slate-500">no cookies — add one</td></tr>}
           </tbody>
         </table>

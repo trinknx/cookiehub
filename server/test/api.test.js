@@ -7,7 +7,7 @@ import { initEncryption, generateKeyB64 } from '../src/crypto.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
 const HDR = 'NetflixId=v-2; SecureSessionId=x'
-const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }) }
+const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }), nftoken: async () => ({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 }) }
 let ctx
 const build = () => {
   initEncryption(generateKeyB64())
@@ -113,6 +113,13 @@ describe('cookies api', () => {
     expect(start.body.queued).toBeGreaterThanOrEqual(1)
     const st = await agent.get('/api/cookies/check-all').expect(200)
     expect(st.body).toHaveProperty('running')
+  })
+
+  it('POST /:id/nftoken returns link+expires; unknown id → 404', async () => {
+    const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+    const r = await agent.post(`/api/cookies/${created[0].id}/nftoken`).expect(200)
+    expect(r.body).toEqual({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 })
+    await agent.post('/api/cookies/99999/nftoken').expect(404)
   })
   it('PATCH label, DELETE removes', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })

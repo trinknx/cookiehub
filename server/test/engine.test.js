@@ -163,6 +163,45 @@ describe('engine', () => {
     expect(js.failed + js.done).toBe(3)
     expect(js.failed).toBe(1)
   })
+  it('getNftoken returns adapter result and writes NOTHING to cookies/check_logs', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const rowBefore = db.prepare('SELECT * FROM cookies WHERE id=?').get(id)
+    const nf = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: async () => ({ status: 'live', reason: '' }),
+      nftoken: async ({ cookies, cookieHeader, fetch, log }) => ({ link: `https://netflix.com/?nftoken=${cookies.length}:${cookieHeader}:${typeof fetch}:${typeof log}`, expires: 42 })
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', nf]]) })
+    const r = await engine.getNftoken(id)
+    expect(r.expires).toBe(42)
+    expect(r.link).toContain(':sid=v0:') // decrypted cookies + header + bound fetch passed through
+    expect(db.prepare('SELECT COUNT(*) c FROM cookies').get().c).toBe(1)
+    expect(db.prepare('SELECT COUNT(*) c FROM check_logs').get().c).toBe(0)
+    expect(db.prepare('SELECT * FROM cookies WHERE id=?').get(id)).toEqual(rowBefore) // status/last_checked_at/updated_at untouched
+  })
+  it('getNftoken: adapter without nftoken → 422; unknown id → 404; unknown service → 422', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })]]) })
+    await expect(engine.getNftoken(id)).rejects.toMatchObject({ status: 422 })
+    await expect(engine.getNftoken(99999)).rejects.toMatchObject({ status: 404 })
+    db.prepare('UPDATE cookies SET service_key=? WHERE id=?').run('ghost', id)
+    await expect(engine.getNftoken(id)).rejects.toMatchObject({ status: 422, message: 'unknown service' })
+  })
+  it('jobStatus exposes activeIds of in-flight checks', async () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 2)
+    const resolvers = []
+    const slow = { key: 'fake', name: 'F', defaultDomain: '.f.com', check: () => new Promise(r => { resolvers.push(r) }) }
+    const engine = createEngine({ db, adapters: new Map([['fake', slow]]) })
+    const p = engine.runCheck(ids[0])
+    await new Promise(r => setTimeout(r, 10))
+    expect(engine.jobStatus().activeIds).toEqual([ids[0]])
+    resolvers.shift()({ status: 'live', reason: '' })
+    await p
+    expect(engine.jobStatus().activeIds).toEqual([])
+  })
 })
 
 describe('mergeRequestHeaders', () => {

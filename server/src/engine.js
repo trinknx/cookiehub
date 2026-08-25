@@ -76,6 +76,30 @@ export function createEngine({ db, adapters }) {
   const proxyFor = serviceKey =>
     getServiceSetting(serviceKey)?.proxy ?? getSetting(db, 'proxy_global') ?? null
 
+  // Adapter-facing fetch: per-service throttle, 15s abort deadline, proxy
+  // dispatcher, and the stored-cookie header merge. Shared by runCheck and
+  // getNftoken so every adapter request gets identical machinery.
+  const makeBoundFetch = (serviceKey, cookieHeader, dispatcher) => async (url, init = {}) => {
+    // reserve the start slot synchronously so concurrent same-service fetches cannot
+    // both read the same lastReq value and start together after sleeping in parallel
+    const last = lastReq.get(serviceKey) || 0
+    const startAt = Math.max(last + SERVICE_GAP_MS, Date.now())
+    lastReq.set(serviceKey, startAt)
+    const wait = startAt - Date.now()
+    if (wait > 0) await sleep(wait)
+    const ctrl = new AbortController()
+    // Never clear this timer: it must stay armed until the 15s deadline even after
+    // response headers arrive — otherwise a stalled res.text()/res.json() body read
+    // would hold a semaphore slot forever. Aborting an already-settled fetch is a
+    // no-op; pending body reads reject on abort.
+    setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+    // undici has no cookie jar, so the stored cookies must go out as a header.
+    // mergeRequestHeaders goes through the standard Headers API so any header
+    // form (object/Headers/entries) survives; an adapter-supplied cookie wins.
+    const headers = mergeRequestHeaders(init.headers, cookieHeader, UA)
+    return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
+  }
+
   async function runCheck(cookieId) {
     if (inflight.has(cookieId)) { const e = new Error('already checking'); e.status = 409; throw e }
     const row = db.prepare('SELECT * FROM cookies WHERE id=?').get(cookieId)
@@ -91,26 +115,7 @@ export function createEngine({ db, adapters }) {
       const cookies = decryptJSON(row.content_enc)
       const cookieHeader = toHeaderString(cookies)
       const dispatcher = buildDispatcher(proxy)
-      const boundFetch = async (url, init = {}) => {
-        // reserve the start slot synchronously so concurrent same-service fetches cannot
-        // both read the same lastReq value and start together after sleeping in parallel
-        const last = lastReq.get(row.service_key) || 0
-        const startAt = Math.max(last + SERVICE_GAP_MS, Date.now())
-        lastReq.set(row.service_key, startAt)
-        const wait = startAt - Date.now()
-        if (wait > 0) await sleep(wait)
-        const ctrl = new AbortController()
-        // Never clear this timer: it must stay armed until the 15s deadline even after
-        // response headers arrive — otherwise a stalled res.text()/res.json() body read
-        // would hold a semaphore slot forever. Aborting an already-settled fetch is a
-        // no-op; pending body reads reject on abort.
-        setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-        // undici has no cookie jar, so the stored cookies must go out as a header.
-        // mergeRequestHeaders goes through the standard Headers API so any header
-        // form (object/Headers/entries) survives; an adapter-supplied cookie wins.
-        const headers = mergeRequestHeaders(init.headers, cookieHeader, UA)
-        return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
-      }
+      const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, log: () => {} })
       const status = result.status === 'live' ? 'live' : 'die'
       const now = Date.now()
@@ -135,6 +140,26 @@ export function createEngine({ db, adapters }) {
     } finally {
       releaseSlot()
       inflight.delete(cookieId)
+    }
+  }
+
+  // Mint a Netflix nftoken login link. Mirrors runCheck's guards and fetch
+  // machinery but is read-only: no status change, no check_logs write.
+  async function getNftoken(cookieId) {
+    const row = db.prepare('SELECT * FROM cookies WHERE id=?').get(cookieId)
+    if (!row) { const e = new Error('cookie not found'); e.status = 404; throw e }
+    const adapter = adapters.get(row.service_key)
+    if (!adapter) { const e = new Error('unknown service'); e.status = 422; throw e }
+    if (typeof adapter.nftoken !== 'function') throw Object.assign(new Error('service does not support nftoken'), { status: 422 })
+    await acquire()
+    try {
+      const cookies = decryptJSON(row.content_enc)
+      const cookieHeader = toHeaderString(cookies)
+      const dispatcher = buildDispatcher(proxyFor(row.service_key))
+      const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
+      return await adapter.nftoken({ cookies, cookieHeader, fetch: boundFetch, log: () => {} })
+    } finally {
+      releaseSlot()
     }
   }
 
@@ -175,7 +200,7 @@ export function createEngine({ db, adapters }) {
     return { queued: rows.length }
   }
 
-  const jobStatus = () => ({ ...job })
+  const jobStatus = () => ({ ...job, activeIds: [...inflight] })
 
-  return { runCheck, startCheckAll, jobStatus, buildDispatcher, proxyFor }
+  return { runCheck, getNftoken, startCheckAll, jobStatus, buildDispatcher, proxyFor }
 }
