@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
-  ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, FolderOpen, Link2, Music2,
+  ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, FolderOpen, Link2, Music2,
   PlayCircle, Plus, RefreshCw, RotateCw, Settings, Trash2, Tv, Upload
 } from 'lucide-react'
 
@@ -32,12 +32,12 @@ const qualityTag = raw => {
   return null
 }
 
-function AccountTags({ info }) {
-  if (!info) return '—'
+function AccountTags({ info, dup }) {
   const tags = []
-  if (info.plan) tags.push(<span key="plan" className={`${PILL} ${planPillClass(info.plan)}`}>{info.plan}</span>)
-  if (info.country) tags.push(<span key="country" className={`${PILL} bg-emerald-600/30 text-emerald-300`}>{info.country}</span>)
-  const quality = info.extra?.videoQuality ? qualityTag(info.extra.videoQuality) : null
+  if (dup) tags.push(<span key="dup" className={`${PILL} bg-amber-500/30 text-amber-300`}>dup</span>)
+  if (info?.plan) tags.push(<span key="plan" className={`${PILL} ${planPillClass(info.plan)}`}>{info.plan}</span>)
+  if (info?.country) tags.push(<span key="country" className={`${PILL} bg-emerald-600/30 text-emerald-300`}>{info.country}</span>)
+  const quality = info?.extra?.videoQuality ? qualityTag(info.extra.videoQuality) : null
   if (quality) tags.push(<span key="quality" className={`${PILL} bg-violet-600/30 text-violet-300`}>{quality}</span>)
   if (!tags.length) return '—'
   return <span className="inline-flex flex-wrap gap-1">{tags}</span>
@@ -125,6 +125,14 @@ export default function Dashboard() {
       await Promise.all([load(), loadServices()])
     } catch (e) { showToast(e.message) }
   }
+  const removeDuplicates = async key => {
+    if (!confirm('Remove duplicate accounts (same email)? Keeps the live/newest of each.')) return
+    try {
+      const r = await api('/cookies/remove-duplicates', { method: 'POST', body: { service: key } })
+      showToast(`removed ${r.removed} duplicates (${r.groups} groups)`)
+      await Promise.all([load(), loadServices()])
+    } catch (e) { showToast(e.message) }
+  }
 
   const copyNft = async id => {
     try {
@@ -190,6 +198,8 @@ export default function Dashboard() {
                       className="rounded-lg p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/60"><PlayCircle className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); removeDie(s.key, s.name) }} title="Remove die accounts"
                       className="rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-red-600/20"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={e => { e.stopPropagation(); removeDuplicates(s.key) }} disabled={job?.running} title="Remove duplicate accounts (same email)"
+                      className="rounded-lg p-1.5 text-amber-300 hover:text-amber-200 hover:bg-amber-600/20 disabled:opacity-40"><CopyX className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); openService(s.key) }} title={`Open ${s.name}`}
                       className="ml-auto rounded-lg p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/60"><ChevronRight className="w-4 h-4" /></button>
                   </div>
@@ -220,6 +230,10 @@ export default function Dashboard() {
               className="flex items-center gap-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 px-3 py-1.5 text-sm font-semibold">
               <Trash2 className="w-4 h-4" /> Remove die
             </button>
+            <button onClick={() => removeDuplicates(view.key)} disabled={job?.running}
+              className="flex items-center gap-1.5 rounded-lg bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+              <CopyX className="w-4 h-4" /> Remove duplicates
+            </button>
           </div>
 
           <div className="overflow-x-auto rounded-xl border border-slate-800">
@@ -237,7 +251,7 @@ export default function Dashboard() {
                       <td className="p-3">{checking
                         ? <span className="bg-amber-500 animate-pulse text-white text-xs font-bold rounded px-2 py-0.5 uppercase">checking…</span>
                         : <span className={`${STATUS_STYLE[c.status]} text-white text-xs font-bold rounded px-2 py-0.5 uppercase`}>{c.status}</span>}</td>
-                      <td className="p-3 text-slate-300"><AccountTags info={c.account_info} /></td>
+                      <td className="p-3 text-slate-300"><AccountTags info={c.account_info} dup={c.dup} /></td>
                       <td className="p-3 text-slate-400">{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : 'never'}</td>
                       <td className="p-3 whitespace-nowrap">
                         <div className="flex gap-1">

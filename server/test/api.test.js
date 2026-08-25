@@ -160,6 +160,63 @@ describe('cookies api', () => {
     await agent.post('/api/cookies/remove-die').send({ service: 'nope' }).expect(400)
   })
 
+  it('remove-duplicates keeps live first then newest, case-insensitive; rows without email untouched', async () => {
+    const seed = async (email, status, service = 'netflix') => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, service_key=?, account_info=? WHERE id=?')
+        .run(status, service, email ? JSON.stringify({ email }) : null, created[0].id)
+      return created[0].id
+    }
+    const a1 = await seed('a@x', 'die')
+    const a2 = await seed('a@x', 'live')
+    const a3 = await seed('A@X', 'unknown') // case-insensitive: groups with a@x
+    const b1 = await seed('b@y', 'die')
+    const c1 = await seed('c@z', 'die')
+    const c2 = await seed('c@z', 'die') // both die → keep newest (highest id)
+    const noEmail = await seed(null, 'die') // no email → never touched
+
+    const r = await agent.post('/api/cookies/remove-duplicates').send({}).expect(200)
+    expect(r.body).toEqual({ removed: 3, kept: 2, groups: 2 })
+    const list = await agent.get('/api/cookies').expect(200)
+    const byId = Object.fromEntries(list.body.items.map(i => [i.id, i]))
+    expect(Object.keys(byId).map(Number).sort((x, y) => x - y)).toEqual([b1, a2, c2, noEmail].sort((x, y) => x - y))
+    expect(byId[a2].status).toBe('live') // live beats newer id (a3)
+    expect(byId[c2]).toBeTruthy() // newest of the die pair
+    expect(byId[c1]).toBeUndefined()
+    expect(byId[noEmail].account_info).toBeNull() // no-email row survived
+    // after removal nothing is a duplicate anymore
+    expect(list.body.items.every(i => i.dup === false)).toBe(true)
+  })
+
+  it('remove-duplicates scoped: other service survives; unknown service → 400; dup flag marks groups', async () => {
+    const seed = async (email, status, service = 'netflix') => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, service_key=?, account_info=? WHERE id=?')
+        .run(status, service, JSON.stringify({ email }), created[0].id)
+      return created[0].id
+    }
+    const n1 = await seed('a@x', 'die')
+    const n2 = await seed('a@x', 'live')
+    const sp = await seed('a@x', 'die', 'spotify')
+    await seed('b@y', 'live')
+
+    const before = await agent.get('/api/cookies').expect(200)
+    const dupFlags = Object.fromEntries(before.body.items.filter(i => i.account_info?.email === 'a@x').map(i => [i.id, i.dup]))
+    expect(dupFlags).toEqual({ [n1]: true, [n2]: true, [sp]: true })
+    expect(before.body.items.find(i => i.account_info?.email === 'b@y').dup).toBe(false)
+
+    const r = await agent.post('/api/cookies/remove-duplicates').send({ service: 'netflix' }).expect(200)
+    expect(r.body).toEqual({ removed: 1, kept: 1, groups: 1 })
+    const after = await agent.get('/api/cookies').expect(200)
+    expect(after.body.items.find(i => i.id === sp)).toBeTruthy() // spotify a@x survives
+    expect(after.body.items.find(i => i.id === n2).status).toBe('live')
+    // scoped dup set: within netflix only one a@x remains → not dup
+    const nf = await agent.get('/api/cookies?service=netflix').expect(200)
+    expect(nf.body.items.every(i => i.dup === false)).toBe(true)
+
+    await agent.post('/api/cookies/remove-duplicates').send({ service: 'nope' }).expect(400)
+  })
+
   it('POST /:id/nftoken returns link+expires; unknown id → 404', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const r = await agent.post(`/api/cookies/${created[0].id}/nftoken`).expect(200)
