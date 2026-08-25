@@ -5,8 +5,8 @@ import { getSetting } from './db.js'
 import { decryptJSON } from './crypto.js'
 import { toHeaderString } from './cookieFormat.js'
 
-const CONCURRENCY = 3
-const SERVICE_GAP_MS = 1000
+const CONCURRENCY = 8
+const SERVICE_GAP_MS = 400
 const TIMEOUT_MS = 15000
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -190,9 +190,12 @@ export function createEngine({ db, adapters }) {
 
   function startCheckAll(serviceKey) {
     if (job.running) { const e = new Error('check-all already running'); e.status = 409; throw e }
+    // newest first (id DESC) — matches the dashboard table sort, so the page the
+    // user is watching updates first and check-all progress is visible in realtime
     let sql = 'SELECT c.id, c.service_key FROM cookies c LEFT JOIN service_settings s ON s.service_key = c.service_key WHERE COALESCE(s.disabled, 0) = 0'
     const params = []
     if (serviceKey) { sql += ' AND c.service_key = ?'; params.push(serviceKey) }
+    sql += ' ORDER BY c.id DESC'
     const rows = db.prepare(sql).all(...params)
     job.running = true; job.pending = rows.length; job.done = 0; job.failed = 0
     ;(async () => {

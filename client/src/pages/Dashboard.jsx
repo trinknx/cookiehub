@@ -13,6 +13,36 @@ const SERVICE_STYLE = {
 const FALLBACK_STYLE = { gradient: 'linear-gradient(135deg,#475569,#1e293b)', Icon: Tv, dot: '#94a3b8' }
 const styleFor = key => SERVICE_STYLE[key] || FALLBACK_STYLE
 
+const PILL = 'rounded px-1.5 py-0.5 text-[11px] font-semibold'
+
+// Account column: inline tag pills (plan / country / video quality) — no email,
+// no dates. Dumb and pure: renders only from the account_info object it's given.
+const planPillClass = plan => {
+  const p = plan.toLowerCase()
+  if (p.includes('premium')) return 'bg-fuchsia-600/30 text-fuchsia-300'
+  if (p.includes('standard')) return 'bg-sky-600/30 text-sky-300' // also matches 'Standard with ads'
+  return 'bg-slate-500/30 text-slate-300' // Basic and unknown plans
+}
+const qualityTag = raw => {
+  const q = String(raw).toLowerCase()
+  if (q.includes('4k') || q.includes('uhd')) return '4K' // before the 'hd' rule: 'uhd' contains 'hd'
+  if (q.includes('720')) return '720p'
+  if (q.includes('hd') || q.includes('1080')) return '1080p'
+  if (q.includes('sd')) return 'SD'
+  return null
+}
+
+function AccountTags({ info }) {
+  if (!info) return '—'
+  const tags = []
+  if (info.plan) tags.push(<span key="plan" className={`${PILL} ${planPillClass(info.plan)}`}>{info.plan}</span>)
+  if (info.country) tags.push(<span key="country" className={`${PILL} bg-emerald-600/30 text-emerald-300`}>{info.country}</span>)
+  const quality = info.extra?.videoQuality ? qualityTag(info.extra.videoQuality) : null
+  if (quality) tags.push(<span key="quality" className={`${PILL} bg-violet-600/30 text-violet-300`}>{quality}</span>)
+  if (!tags.length) return '—'
+  return <span className="inline-flex flex-wrap gap-1">{tags}</span>
+}
+
 export default function Dashboard() {
   const [view, setView] = useState({ level: 'home' })
   const [items, setItems] = useState([])
@@ -207,9 +237,7 @@ export default function Dashboard() {
                       <td className="p-3">{checking
                         ? <span className="bg-amber-500 animate-pulse text-white text-xs font-bold rounded px-2 py-0.5 uppercase">checking…</span>
                         : <span className={`${STATUS_STYLE[c.status]} text-white text-xs font-bold rounded px-2 py-0.5 uppercase`}>{c.status}</span>}</td>
-                      <td className="p-3 text-slate-300">
-                        {c.account_info ? [c.account_info.email, c.account_info.plan, c.account_info.country, c.account_info.expiresAt].filter(Boolean).join(' · ') : '—'}
-                      </td>
+                      <td className="p-3 text-slate-300"><AccountTags info={c.account_info} /></td>
                       <td className="p-3 text-slate-400">{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : 'never'}</td>
                       <td className="p-3 whitespace-nowrap">
                         <div className="flex gap-1">

@@ -113,6 +113,24 @@ describe('engine', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(engine.jobStatus()).toMatchObject({ running: false, done: 4, failed: 0 })
   })
+  it('check-all processes NEWEST cookies first (queue order matches dashboard id DESC sort)', async () => {
+    const db = openDb()
+    seed(db, 'fake', 3) // seeded values 'v0','v1','v2' — 'v2' is the newest (largest id)
+    const resolvers = []
+    const started = []
+    const slow = {
+      key: 'fake', name: 'F', defaultDomain: '.f.com',
+      check: ({ cookieHeader }) => { started.push(cookieHeader); return new Promise(r => { resolvers.push(r) }) }
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', slow]]) })
+    engine.startCheckAll()
+    await new Promise(r => setTimeout(r, 20))
+    expect(started).toHaveLength(3) // CONCURRENCY (8) ≥ 3 → all start immediately, in queue order
+    expect(started[0]).toBe('sid=v2') // first checked must be the NEWEST cookie
+    for (let i = 0; i < 3; i++) resolvers.shift()({ status: 'live', reason: '' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(engine.jobStatus().running).toBe(false)
+  })
   it('check-all skips disabled services', () => {
     const db = openDb()
     seed(db, 'fake', 2); seed(db, 'off', 2)
@@ -124,7 +142,7 @@ describe('engine', () => {
     const engine = createEngine({ db: openDb(), adapters: new Map() })
     expect(() => engine.buildDispatcher('ftp://x:21')).toThrow(/unsupported/)
   })
-  it('throttles concurrent same-service requests at least ~1s apart', async () => {
+  it('throttles concurrent same-service requests at least ~400ms apart', async () => {
     const db = openDb()
     const ids = seed(db, 'fake', 3)
     const starts = []
@@ -134,7 +152,7 @@ describe('engine', () => {
     starts.length = 0
     await Promise.all(ids.slice(1).map(id => engine.runCheck(id)))
     expect(starts.length).toBe(2)
-    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(900)
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(300) // SERVICE_GAP_MS (400) minus 100ms tolerance
   })
   it('buildDispatcher returns a dispatcher for socks5 without connecting (smoke)', () => {
     const engine = createEngine({ db: openDb(), adapters: new Map() })
