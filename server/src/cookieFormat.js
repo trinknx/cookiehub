@@ -14,15 +14,17 @@ function tryParseArray(span) {
   } catch { return null }
 }
 
-// Bulk split. Extraction mode: balanced JSON arrays (Cookie-Editor exports,
-// possibly pretty-printed inside seller files full of header junk) are the ONLY
-// thing that matters — when ≥1 array is found the surrounding text is discarded
-// entirely (skipped = 0: it is never chunked). With zero arrays, input falls
-// back to legacy blank-line splitting, which silently DROPS chunks that
-// detectFormat rejects (seller banners, t.me lines, header text) — junk must
-// not surface as per-chunk import failures in a 2000-file folder import.
-// splitBulkCounted exposes the drop count; splitBulk keeps the plain-array
-// shape for existing callers.
+// Bulk split — HYBRID extraction. Balanced JSON arrays (Cookie-Editor exports,
+// possibly pretty-printed inside seller files full of header junk) are emitted
+// as chunks, AND the text OUTSIDE the arrays runs through the legacy path
+// (blank-line split + detectFormat junk filter) — so a mixed selection (one
+// Cookie-Editor JSON file alongside netscape/header .txt files) imports every
+// set instead of discarding the non-JSON ones. Junk filtering is what makes
+// this safe: seller banners, t.me lines and header text around the arrays are
+// silently dropped, never surfaced as per-chunk import failures in a
+// 2000-file folder import. skipped counts junk dropped from the outside-text
+// regions only; JSON-span regions contribute 0. splitBulkCounted exposes the
+// count; splitBulk keeps the plain-array shape for existing callers.
 //
 // Single pass, O(n): candidate '[' positions stack up while string-aware
 // scanning (quotes/escapes only tracked inside a candidate, so junk-level
@@ -32,7 +34,9 @@ function tryParseArray(span) {
 // now junk) are dropped so nested arrays are never double-extracted.
 export function splitBulkCounted(text) {
   const src = String(text)
-  const spans = []
+  const items = [] // { pos, chunk } — JSON spans + surviving legacy chunks, ordered by pos at the end
+  const regions = [] // outside-span text ranges [start, end) queued for the legacy path
+  let lastEnd = 0
   const candidates = []
   let inString = false
   let escaped = false
@@ -64,17 +68,32 @@ export function splitBulkCounted(text) {
       const start = candidates.pop()
       const span = src.slice(start, i + 1)
       if (hasNamedCookie(tryParseArray(span))) {
-        spans.push(span)
-        if (spans.length > MAX_CHUNKS) return { chunks: spans, skipped: 0 } // cap: route rejects > MAX_CHUNKS as too_many
+        if (start > lastEnd) regions.push([lastEnd, start])
+        items.push({ pos: start, chunk: span })
+        if (items.length > MAX_CHUNKS) return { chunks: items.map(it => it.chunk), skipped: 0 } // cap: route rejects > MAX_CHUNKS as too_many
+        lastEnd = i + 1
         candidates.length = 0
       }
     }
     i++
   }
-  if (spans.length) return { chunks: spans, skipped: 0 }
-  const parts = src.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)
-  const chunks = parts.filter(p => detectFormat(p))
-  return { chunks, skipped: parts.length - chunks.length }
+  if (items.length && lastEnd < src.length) regions.push([lastEnd, src.length])
+  if (!items.length) regions.push([0, src.length])
+  let skipped = 0
+  for (const [a, b] of regions) {
+    const region = src.slice(a, b)
+    let off = 0
+    for (const part of region.split(/\n\s*\n/)) {
+      const trimmed = part.trim()
+      if (!trimmed) continue
+      const at = region.indexOf(part, off)
+      off = at + part.length
+      if (detectFormat(trimmed)) items.push({ pos: a + at, chunk: trimmed })
+      else skipped++
+    }
+  }
+  items.sort((x, y) => x.pos - y.pos)
+  return { chunks: items.map(it => it.chunk), skipped }
 }
 
 export function splitBulk(text) {

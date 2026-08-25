@@ -288,7 +288,7 @@ function AddModal({ services, onClose, onDone, showToast }) {
   const [busy, setBusy] = useState('')
   const createdAny = useRef(false)
   useEffect(() => { if (!service && services.length) setService(services[0].key) }, [services, service])
-  const close = () => { onClose(); if (createdAny.current) onDone() }
+  const close = () => { if (busy) return; onClose(); if (createdAny.current) onDone() }
   const submit = async (e, contentOverride) => {
     if (e) e.preventDefault() // manual form submit; the auto path passes null
     try {
@@ -319,11 +319,12 @@ function AddModal({ services, onClose, onDone, showToast }) {
       <form onClick={e => e.stopPropagation()} onSubmit={submit} className="bg-slate-800 rounded-xl p-6 w-full max-w-2xl space-y-3">
         <h2 className="text-lg font-bold">Add cookies</h2>
         <div className="flex gap-3">
-          <select value={service} onChange={e => setService(e.target.value)} className="rounded bg-slate-900 border border-slate-700 px-3 py-2">
+          <select value={service} onChange={e => setService(e.target.value)} disabled={!!busy}
+            className="rounded bg-slate-900 border border-slate-700 px-3 py-2 disabled:opacity-50">
             {services.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
           </select>
-          <input value={label} onChange={e => setLabel(e.target.value)} placeholder="label (optional)"
-            className="flex-1 rounded bg-slate-900 border border-slate-700 px-3 py-2" />
+          <input value={label} onChange={e => setLabel(e.target.value)} disabled={!!busy} placeholder="label (optional)"
+            className="flex-1 rounded bg-slate-900 border border-slate-700 px-3 py-2 disabled:opacity-50" />
         </div>
         <textarea value={content} onChange={e => setContent(e.target.value)} rows={10} required
           placeholder="Netscape, header string (k=v; k=v), or Cookie-Editor JSON — bulk: separate sets with a blank line."
@@ -338,7 +339,7 @@ function AddModal({ services, onClose, onDone, showToast }) {
             <input type="file" multiple accept=".txt,.json,text/plain" className="hidden" disabled={!!busy} webkitdirectory="" directory="" onChange={readAndImport} />
           </label>
           {busy && <span className="text-xs text-slate-400 animate-pulse">{busy}</span>}
-          <button type="button" onClick={close} className="rounded bg-slate-700 px-4 py-2">close</button>
+          <button type="button" onClick={close} disabled={!!busy} className="rounded bg-slate-700 px-4 py-2 disabled:opacity-50">close</button>
           <button disabled={!!busy} className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold disabled:opacity-50">import</button>
         </div>
         {result && (

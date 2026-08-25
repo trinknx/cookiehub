@@ -180,11 +180,29 @@ describe('converters', () => {
 })
 
 describe('splitBulk JSON array extraction', () => {
-  it('extracts 2 JSON arrays from a mixed seller file, discarding surrounding text', () => {
-    const chunks = splitBulk(MIXED_FILE)
-    expect(chunks).toEqual([JSON_ARR_1, JSON_ARR_2])
-    expect(chunks.every(c => detectFormat(c) === 'json')).toBe(true)
-    expect(splitBulkCounted(MIXED_FILE)).toEqual({ chunks: [JSON_ARR_1, JSON_ARR_2], skipped: 0 })
+  it('mixed seller file: JSON arrays extracted, outside text joins via legacy path', () => {
+    const HDR_TAIL = 'NetflixId=hdr-synthetic; SecureSessionId=hdr-synthetic-2'
+    const { chunks, skipped } = splitBulkCounted(MIXED_FILE)
+    expect(chunks).toEqual([JSON_ARR_1, JSON_ARR_2, HDR_TAIL])
+    expect(chunks.map(detectFormat)).toEqual(['json', 'json', 'header'])
+    expect(skipped).toBeGreaterThanOrEqual(1) // seller headers around the arrays count as junk now
+  })
+  it('HYBRID: json array + netscape block + junk in one payload → both chunks, junk skipped', () => {
+    const span = '[{"name":"a","value":"1"}]'
+    const { chunks, skipped } = splitBulkCounted(`Valid Cookie / Every day!\nt.me/ULPfile\n${span}\n\n${NET}`)
+    expect(chunks).toEqual([span, NET])
+    expect(chunks.map(detectFormat)).toEqual(['json', 'netscape'])
+    expect(skipped).toBeGreaterThanOrEqual(1)
+  })
+  it('HYBRID: order of appearance — legacy chunk before json span', () => {
+    const span = '[{"name":"a","value":"1"}]'
+    expect(splitBulk(`${NET}\n\n${span}\n\njunk banner`)).toEqual([NET, span])
+  })
+  it('HYBRID: netscape between two json spans survives, in order', () => {
+    const a = '[{"name":"a","value":"1"}]'
+    const b = '[{"name":"b","value":"2"}]'
+    const { chunks } = splitBulkCounted(`${a}\n\n${NET}\n\n${b}`)
+    expect(chunks).toEqual([a, NET, b])
   })
   it('brackets inside JSON string values do not break span extraction', () => {
     const span = '[{"name": "a", "value": "a]b"}, {"name": "q", "value": "esc\\"aped]"}]'

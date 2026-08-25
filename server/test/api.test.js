@@ -61,9 +61,17 @@ describe('cookies api', () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
     expect(res.body.created).toHaveLength(2)
     expect(res.body.created.every(c => c.source_format === 'json')).toBe(true)
-    expect(res.body.skipped).toBe(0)
+    expect(res.body.skipped).toBe(3) // junk around both arrays, now counted
     const h = await agent.get(`/api/cookies/${res.body.created[0].id}/export?format=header`).expect(200)
     expect(h.body.content).toContain('NetflixId=syn-1')
+  })
+  it('bulk import: mixed selection — json file + netscape file import both', async () => {
+    const json = '[{"name":"NetflixId","value":"mix-1","domain":".netflix.com","path":"/","secure":true,"httpOnly":false,"hostOnly":false,"sameSite":"no_restriction","session":false,"expirationDate":1790000000}]'
+    const content = `\uFEFFValid Cookie / Every day!\nt.me/ULPfile\n${json}\n\n${NET}`
+    const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
+    expect(res.body.created.map(c => c.source_format).sort()).toEqual(['json', 'netscape'])
+    expect(res.body.failed).toEqual([])
+    expect(res.body.skipped).toBeGreaterThanOrEqual(1)
   })
   it('pure legacy bulk payload still splits on blank lines', async () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content: `${HDR}\n\nNetflixId=hdr-2` }).expect(200)
