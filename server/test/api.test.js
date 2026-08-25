@@ -132,6 +132,21 @@ describe('cookies api', () => {
     const st = await agent.get('/api/cookies/check-all').expect(200)
     expect(st.body).toHaveProperty('running')
   })
+  it('check-all status filter: {status:"unknown"} queues only unknowns; invalid status → 400', async () => {
+    const seed = async status => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      if (status !== 'unknown') ctx.db.prepare('UPDATE cookies SET status=? WHERE id=?').run(status, created[0].id)
+      return created[0].id
+    }
+    await seed('unknown'); await seed('unknown'); await seed('live'); await seed('die')
+    const r = await agent.post('/api/cookies/check-all').send({ status: 'unknown' }).expect(200)
+    expect(r.body.queued).toBe(2)
+    // adapter resolves immediately (fake live) — wait for the job to land, then check accounting
+    await new Promise(res => setTimeout(res, 100))
+    const st = await agent.get('/api/cookies/check-all').expect(200)
+    expect(st.body).toMatchObject({ running: false, done: 2, failed: 0 })
+    await agent.post('/api/cookies/check-all').send({ status: 'banana' }).expect(400)
+  })
 
   it('remove-die deletes all die cookies across services; live/unknown untouched', async () => {
     const seed = async (status, service = 'netflix') => {

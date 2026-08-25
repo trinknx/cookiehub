@@ -188,13 +188,16 @@ export function createEngine({ db, adapters }) {
     else active--
   }
 
-  function startCheckAll(serviceKey) {
+  function startCheckAll(serviceKey, statusFilter) {
     if (job.running) { const e = new Error('check-all already running'); e.status = 409; throw e }
     // newest first (id DESC) — matches the dashboard table sort, so the page the
     // user is watching updates first and check-all progress is visible in realtime
     let sql = 'SELECT c.id, c.service_key FROM cookies c LEFT JOIN service_settings s ON s.service_key = c.service_key WHERE COALESCE(s.disabled, 0) = 0'
     const params = []
     if (serviceKey) { sql += ' AND c.service_key = ?'; params.push(serviceKey) }
+    // recheck-unknown & friends: restrict the queue to one status. Invalid values
+    // are ignored (no filter) — the route layer is the one that rejects bad input.
+    if (/^(unknown|live|die)$/.test(statusFilter)) { sql += ' AND c.status = ?'; params.push(statusFilter) }
     sql += ' ORDER BY c.id DESC'
     const rows = db.prepare(sql).all(...params)
     job.running = true; job.pending = rows.length; job.done = 0; job.failed = 0

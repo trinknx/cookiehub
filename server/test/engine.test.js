@@ -138,6 +138,33 @@ describe('engine', () => {
     const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })], ['off', fakeAdapter({ status: 'live', reason: '' })]]) })
     expect(engine.startCheckAll().queued).toBe(2)
   })
+  it('check-all status filter: startCheckAll(null, "unknown") queues exactly the unknown cookies', async () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 4)
+    const upd = db.prepare('UPDATE cookies SET status=? WHERE id=?')
+    upd.run('unknown', ids[0]); upd.run('unknown', ids[1]); upd.run('live', ids[2]); upd.run('die', ids[3])
+    const started = []
+    const resolvers = []
+    const slow = {
+      key: 'fake', name: 'F', defaultDomain: '.f.com',
+      check: ({ cookieHeader }) => { started.push(cookieHeader); return new Promise(r => { resolvers.push(r) }) }
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', slow]]) })
+    const { queued } = engine.startCheckAll(null, 'unknown')
+    expect(queued).toBe(2)
+    await new Promise(r => setTimeout(r, 20))
+    expect([...started].sort()).toEqual(['sid=v0', 'sid=v1']) // only the two unknowns started
+    for (let i = 0; i < 2; i++) resolvers.shift()({ status: 'live', reason: '' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(engine.jobStatus()).toMatchObject({ running: false, done: 2, failed: 0 })
+  })
+  it('check-all status filter: invalid value is ignored (no filter applied)', () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 2)
+    db.prepare('UPDATE cookies SET status=? WHERE id=?').run('live', ids[0])
+    const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })]]) })
+    expect(engine.startCheckAll(null, 'bogus').queued).toBe(2)
+  })
   it('buildDispatcher rejects unsupported protocol', () => {
     const engine = createEngine({ db: openDb(), adapters: new Map() })
     expect(() => engine.buildDispatcher('ftp://x:21')).toThrow(/unsupported/)

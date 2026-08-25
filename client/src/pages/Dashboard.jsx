@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
   ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, FolderOpen, Link2, Music2,
-  PlayCircle, Plus, RefreshCw, RotateCw, Settings, Trash2, Tv, Upload
+  PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Trash2, Tv, Upload
 } from 'lucide-react'
 
 const STATUS_STYLE = { live: 'bg-emerald-600', die: 'bg-red-600', unknown: 'bg-slate-600' }
@@ -112,10 +112,17 @@ export default function Dashboard() {
     try { const r = await api(`/cookies/${id}/check`, { method: 'POST' }); showToast(`check: ${r.status}`); await Promise.all([load(), loadServices()]) }
     catch (e) { showToast(e.message) }
   }
-  const checkAll = async service => {
-    const svc = service ?? fService
-    try { const r = await api('/cookies/check-all', { method: 'POST', body: svc ? { service: svc } : {} }); setJob({ running: true, pending: r.queued, done: 0, failed: 0 }) }
-    catch (e) { showToast(e.message) }
+  // bodyOverride scopes the run ({service} / {service,status}); without it the
+  // header button checks the currently-filtered service (or everything on home)
+  const checkAll = async bodyOverride => {
+    const body = bodyOverride ?? (fService ? { service: fService } : {})
+    try {
+      const r = await api('/cookies/check-all', { method: 'POST', body })
+      // recheck-unknown with nothing unknown: the job would finish instantly and
+      // toast a confusing "0 checked" — say what actually happened instead
+      if (!r.queued && body.status === 'unknown') { showToast('no unknown accounts to recheck'); return }
+      setJob({ running: true, pending: r.queued, done: 0, failed: 0 })
+    } catch (e) { showToast(e.message) }
   }
   const removeDie = async (key, name) => {
     if (!confirm(`Remove all DIE accounts of ${name}?`)) return
@@ -194,8 +201,10 @@ export default function Dashboard() {
                     <span className="bg-slate-700 text-slate-200 text-xs font-bold rounded-full px-2.5 py-0.5">{s.cookieCount} total</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button onClick={e => { e.stopPropagation(); checkAll(s.key) }} title={`Check all ${s.name}`}
+                    <button onClick={e => { e.stopPropagation(); checkAll({ service: s.key }) }} title={`Check all ${s.name}`}
                       className="rounded-lg p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/60"><PlayCircle className="w-4 h-4" /></button>
+                    <button onClick={e => { e.stopPropagation(); checkAll({ service: s.key, status: 'unknown' }) }} disabled={job?.running} title="Recheck unknown accounts"
+                      className="rounded-lg p-1.5 text-sky-300 hover:text-sky-200 hover:bg-sky-600/20 disabled:opacity-40"><RotateCcw className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); removeDie(s.key, s.name) }} title="Remove die accounts"
                       className="rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-red-600/20"><Trash2 className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); removeDuplicates(s.key) }} disabled={job?.running} title="Remove duplicate accounts (same email)"
@@ -226,6 +235,10 @@ export default function Dashboard() {
               <option value="">all status</option>
               <option value="live">live</option><option value="die">die</option><option value="unknown">unknown</option>
             </select>
+            <button onClick={() => checkAll({ service: view.key, status: 'unknown' })} disabled={job?.running}
+              className="flex items-center gap-1.5 rounded-lg bg-sky-600/20 text-sky-300 hover:bg-sky-600/30 px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
+              <RotateCcw className="w-4 h-4" /> Recheck unknown
+            </button>
             <button onClick={() => removeDie(view.key, current?.name || view.key)}
               className="flex items-center gap-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 px-3 py-1.5 text-sm font-semibold">
               <Trash2 className="w-4 h-4" /> Remove die
