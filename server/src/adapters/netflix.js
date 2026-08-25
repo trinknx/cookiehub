@@ -81,12 +81,26 @@ export default {
     try {
       const acc = await fetch('https://www.netflix.com/account', { headers: { 'user-agent': UA } })
       const html = await acc.text()
-      const plan = html.match(/data-uia="plan-name"[^>]*>\s*(?:<[^>]*>)*([^<]+)/) || html.match(/"planName":"([^"]+)"/)
-      if (plan) info.plan = plan[1].trim()
-      const next = html.match(/data-uia="next-bill-date"[^>]*>([^<]+)/)
-      if (next) info.expiresAt = next[1].trim()
-      const email = html.match(/"email":"([^"]+)"/)
+      // /account embeds TWO data sources (verified against a live page, 2026-08-25):
+      // 1) a form-render model as ESCAPED JSON inside a JS string — raw bytes look
+      //    like \"fieldType\":\"String\",\"value\":\"Basic\" — hence the \\" in the
+      //    regexes; capture stops at the closing backslash.
+      // 2) plain reactContext JSON with unescaped quotes (emailAddress, memberSince).
+      // The old data-uia="plan-name" / "planName" / next-bill-date / "email" regexes
+      // never matched the real page and are gone.
+      const plan = html.match(/localizedPlanName\\":{\\"fieldType\\":\\"String\\",\\"value\\":\\"([^\\]+)/)
+      if (plan) info.plan = plan[1]
+      const streams = html.match(/maxStreams\\":{\\"fieldType\\":\\"Numeric\\",\\"value\\":(\d+)/)
+      const quality = html.match(/videoQuality\\":{\\"fieldType\\":\\"String\\",\\"value\\":\\"([^\\]+)/)
+      if (streams || quality) {
+        info.extra = {}
+        if (streams) info.extra.maxStreams = Number(streams[1])
+        if (quality) info.extra.videoQuality = quality[1]
+      }
+      const email = html.match(/"emailAddress":"([^"]+)"/)
       if (email) info.email = email[1]
+      const since = html.match(/"memberSince":"([^"]+)"/)
+      if (since) info.memberSince = since[1]
     } catch (e) { log(`account info fetch failed: ${e.message}`) }
     return { status: 'live', reason: 'logged in', accountInfo: Object.keys(info).length ? info : undefined }
   },

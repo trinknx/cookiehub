@@ -29,19 +29,39 @@ describe('netflix adapter', () => {
     expect(r).toMatchObject({ status: 'die' })
     expect(r.reason).toContain('/vi/Login')
   })
-  it('200 → live with country from body', async () => {
+  // Verbatim escaped-JSON fragment captured from a live /account response
+  // (2026-08-25): the form-render model is embedded as escaped JSON inside a
+  // JS string, so raw bytes contain backslash-quotes. String.raw keeps them.
+  const ESCAPED_FORM_MODEL = String.raw`\"currentPlan\":{\"fieldType\":\"Group\",\"fieldGroup\":\"MemberPlan\",\"fields\":{\"localizedPlanName\":{\"fieldType\":\"String\",\"value\":\"Basic\"},\"maxStreams\":{\"fieldType\":\"Numeric\",\"value\":1},\"videoQuality\":{\"fieldType\":\"String\",\"value\":\"HD720p\"},\"planId\":{\"fieldType\":\"String\",\"value\":\"4001\"},\"hasAds\":{\"fieldType\":\"Boolean\",\"value\":false}},\"memberSince\":{\"fieldType\":\"Numeric\",\"value\":1773158336000}`
+  const ACCOUNT_HTML = [
+    '<script>reactContext = {"userInfo":{"data":{"name":"Himachandan","emailAddress":"himachandan08@gmail.com","currentCountry":"IN","memberSince":"March 2026"}}};</script>',
+    `<script>var formModel = "${ESCAPED_FORM_MODEL}";</script>`,
+    // decoys: marketing copy + the old (dead) data-uia hooks must not leak in
+    '<div data-uia="plan-name"><div>Premium</div></div>',
+    '<div data-uia="next-bill-date">August 30, 2026</div>',
+    '<section>Get Premium on any device — Standard with ads from $2.99</section>',
+    '"planName":"Mobile"'
+  ].join('\n')
+  it('200 → live with account info from verified /account structure', async () => {
     const r = await netflix.check(ctxOf([
-      res(200, '{"currentCountry":"VN"}'),
-      res(200, '<b data-uia="plan-name"><div>Premium</div></b><div data-uia="next-bill-date">August 30, 2026</div>"email":"a@gmail.com"')
+      res(200, '{"userInfo":{"data":{"currentCountry":"IN"}}}'),
+      res(200, ACCOUNT_HTML)
     ]))
     expect(r.status).toBe('live')
-    expect(r.accountInfo).toMatchObject({ country: 'VN', plan: 'Premium', email: 'a@gmail.com', expiresAt: 'August 30, 2026' })
+    expect(r.accountInfo).toEqual({
+      country: 'IN',
+      plan: 'Basic',
+      email: 'himachandan08@gmail.com',
+      memberSince: 'March 2026',
+      extra: { maxStreams: 1, videoQuality: 'HD720p' }
+    })
   })
-  it('account fetch failure still → live', async () => {
+  it('account fetch failure still → live, no accountInfo', async () => {
     let call = 0
     const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async () => { if (call++ === 0) return res(200, ''); throw new Error('boom') } }
     const r = await netflix.check(ctx)
     expect(r.status).toBe('live')
+    expect(r.accountInfo).toBeUndefined()
   })
   it('429 → throws (transient, not die)', async () => {
     await expect(netflix.check(ctxOf([res(429)]))).rejects.toThrow('HTTP 429')
