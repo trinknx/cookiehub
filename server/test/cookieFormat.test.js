@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNKS } from '../src/cookieFormat.js'
+import { splitBulk, splitBulkCounted, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNKS } from '../src/cookieFormat.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tSecureSessionId\tabc123'
 const NET_HTTPONLY = '#HttpOnly_.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
@@ -7,7 +7,40 @@ const HDR = 'SecureSessionId=abc123; NetflixId=v-2'
 
 describe('splitBulk', () => {
   it('splits on blank lines and drops empties', () => {
-    expect(splitBulk('a\n\n\nb\n   \nc')).toEqual(['a', 'b', 'c'])
+    expect(splitBulk('NetflixId=a\n\n\nNetflixId=b\n   \nNetflixId=c')).toEqual(['NetflixId=a', 'NetflixId=b', 'NetflixId=c'])
+  })
+  it('legacy mode silently drops junk chunks (seller headers, t.me lines)', () => {
+    expect(splitBulk(`${NET}\n\nValid Cookie / Every day!\nt.me/ULPfile`)).toEqual([NET])
+  })
+  it('splitBulkCounted reports dropped junk as skipped, valid chunks kept', () => {
+    expect(splitBulkCounted(`seller banner\n\n${HDR}\n\nnot a cookie`)).toEqual({ chunks: [HDR], skipped: 2 })
+  })
+})
+
+// Real-world ULPfile folder import: thousands of .txt files, each a junk
+// header (BOM + banner + t.me line + mojibake account info), a blank line,
+// then a valid netscape block.
+const ULP_FILE = [
+  '﻿Valid Cookie / Every day!',
+  't.me/ULPfile',
+  'â€“ Email: buyer@example.com â€” pass: secret',
+  '',
+  NET,
+  NET_HTTPONLY
+].join('\n')
+
+describe('splitBulk ULPfile-style folder files', () => {
+  it('drops the junk header and keeps exactly one netscape chunk', () => {
+    const { chunks, skipped } = splitBulkCounted(ULP_FILE)
+    expect(chunks).toHaveLength(1)
+    expect(skipped).toBeGreaterThanOrEqual(1)
+    expect(detectFormat(chunks[0])).toBe('netscape')
+    expect(parseNetscape(chunks[0], '.netflix.com')).toHaveLength(2)
+  })
+  it('a whole folder of such files joins into one chunk per file', () => {
+    const { chunks, skipped } = splitBulkCounted(Array(3).fill(ULP_FILE).join('\n\n'))
+    expect(chunks).toHaveLength(3)
+    expect(skipped).toBe(3)
   })
 })
 
@@ -151,6 +184,7 @@ describe('splitBulk JSON array extraction', () => {
     const chunks = splitBulk(MIXED_FILE)
     expect(chunks).toEqual([JSON_ARR_1, JSON_ARR_2])
     expect(chunks.every(c => detectFormat(c) === 'json')).toBe(true)
+    expect(splitBulkCounted(MIXED_FILE)).toEqual({ chunks: [JSON_ARR_1, JSON_ARR_2], skipped: 0 })
   })
   it('brackets inside JSON string values do not break span extraction', () => {
     const span = '[{"name": "a", "value": "a]b"}, {"name": "q", "value": "esc\\"aped]"}]'
@@ -183,19 +217,19 @@ describe('splitBulk JSON array extraction', () => {
   })
   it('200KB of unmatched brackets stays linear (perf regression)', () => {
     const hostile = `${'['.repeat(200000)}\n\n${NET}`
-    const chunks = splitBulk(hostile)
-    expect(chunks).toHaveLength(2)
-    expect(chunks[1]).toBe(NET)
+    const { chunks, skipped } = splitBulkCounted(hostile)
+    expect(chunks).toEqual([NET]) // bracket junk dropped, not returned
+    expect(skipped).toBe(1)
   })
   it('pure legacy text with no JSON spans still splits on blank lines', () => {
     expect(splitBulk('NetflixId=a\n\nNetflixId=b; SecureSessionId=c')).toEqual(['NetflixId=a', 'NetflixId=b; SecureSessionId=c'])
   })
-  it('non-extractable brackets keep the full text in legacy splitting', () => {
-    expect(splitBulk('[]')).toEqual(['[]'])
-    expect(splitBulk('before [1,2] after')).toEqual(['before [1,2] after'])
+  it('non-extractable bracket text is junk — dropped and counted', () => {
+    expect(splitBulkCounted('[]')).toEqual({ chunks: [], skipped: 1 })
+    expect(splitBulk('before [1,2] after')).toEqual([])
   })
-  it('unbalanced bracket leaves text exactly as today', () => {
-    expect(splitBulk('a=1\n[not json')).toEqual(['a=1\n[not json'])
+  it('unbalanced bracket junk chunk is dropped entirely', () => {
+    expect(splitBulkCounted('a=1\n[not json')).toEqual({ chunks: [], skipped: 1 })
   })
 })
 

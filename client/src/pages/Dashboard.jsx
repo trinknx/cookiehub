@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
-  ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, Link2, Music2,
-  PlayCircle, Plus, RefreshCw, RotateCw, Settings, Trash2, Tv
+  ArrowLeft, ChevronRight, Clapperboard, ClipboardCopy, Copy, FolderOpen, Link2, Music2,
+  PlayCircle, Plus, RefreshCw, RotateCw, Settings, Trash2, Tv, Upload
 } from 'lucide-react'
 
 const STATUS_STYLE = { live: 'bg-emerald-600', die: 'bg-red-600', unknown: 'bg-slate-600' }
@@ -285,18 +285,35 @@ function AddModal({ services, onClose, onDone, showToast }) {
   const [label, setLabel] = useState('')
   const [content, setContent] = useState('')
   const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState('')
   const createdAny = useRef(false)
   useEffect(() => { if (!service && services.length) setService(services[0].key) }, [services, service])
   const close = () => { onClose(); if (createdAny.current) onDone() }
-  const submit = async e => {
-    e.preventDefault()
+  const submit = async (e, contentOverride) => {
+    if (e) e.preventDefault() // manual form submit; the auto path passes null
     try {
-      const r = await api('/cookies', { method: 'POST', body: { service, content, label } })
+      const r = await api('/cookies', { method: 'POST', body: { service, content: contentOverride ?? content, label } })
       if (r.created.length) createdAny.current = true
       setResult(r)
-      showToast(`imported ${r.created.length}, failed ${r.failed.length}`)
+      showToast(`imported ${r.created.length}, failed ${r.failed.length}${r.skipped ? `, skipped ${r.skipped}` : ''}`)
     } catch (err) { showToast(err.message) }
   }
+  // Files/Folder picker: read every selected file, join, and auto-import —
+  // no second click. Server-side junk filtering drops seller headers, so a
+  // folder of raw .txt cookie files imports without failure noise.
+  const readAndImport = async e => {
+    const files = [...(e.target.files || [])]
+    e.target.value = '' // re-selecting the same folder must re-fire change
+    if (!files.length) return
+    try {
+      setBusy(`reading ${files.length} file${files.length === 1 ? '' : 's'}…`)
+      const texts = await Promise.all(files.map(f => f.text()))
+      setBusy(`importing ${files.length} file${files.length === 1 ? '' : 's'}…`)
+      await submit(null, texts.join('\n\n'))
+    } catch (err) { showToast(err.message) }
+    finally { setBusy('') }
+  }
+  const fileBtn = `${busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer hover:bg-slate-600'} rounded bg-slate-700 px-4 py-2 text-sm flex items-center gap-1.5`
   return (
     <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={close}>
       <form onClick={e => e.stopPropagation()} onSubmit={submit} className="bg-slate-800 rounded-xl p-6 w-full max-w-2xl space-y-3">
@@ -311,15 +328,34 @@ function AddModal({ services, onClose, onDone, showToast }) {
         <textarea value={content} onChange={e => setContent(e.target.value)} rows={10} required
           placeholder="Netscape, header string (k=v; k=v), or Cookie-Editor JSON — bulk: separate sets with a blank line."
           className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 font-mono text-xs" />
-        <div className="flex gap-2 justify-end">
-          <label className="mr-auto cursor-pointer rounded bg-slate-700 hover:bg-slate-600 px-4 py-2 text-sm">Choose file<input type="file" accept=".txt,.json" className="hidden" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; f.text().then(setContent) }} /></label>
+        <div className="flex gap-2 justify-end items-center">
+          <label className={`mr-auto ${fileBtn}`}>
+            <Upload className="w-4 h-4" /> Files
+            <input type="file" multiple accept=".txt,.json,text/plain" className="hidden" disabled={!!busy} onChange={readAndImport} />
+          </label>
+          <label className={fileBtn}>
+            <FolderOpen className="w-4 h-4" /> Folder
+            <input type="file" multiple accept=".txt,.json,text/plain" className="hidden" disabled={!!busy} webkitdirectory="" directory="" onChange={readAndImport} />
+          </label>
+          {busy && <span className="text-xs text-slate-400 animate-pulse">{busy}</span>}
           <button type="button" onClick={close} className="rounded bg-slate-700 px-4 py-2">close</button>
-          <button className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold">import</button>
+          <button disabled={!!busy} className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold disabled:opacity-50">import</button>
         </div>
         {result && (
           <div className="text-xs space-y-1 max-h-40 overflow-auto">
-            {result.created.map(c => <div key={c.id} className="text-emerald-400">#{c.id} imported ({c.source_format})</div>)}
-            {result.failed.map(f => <div key={f.index} className="text-red-400">chunk {f.index}: {f.error}</div>)}
+            {result.created.length > 50 ? (
+              // huge folder import: one summary line, not thousands of rows
+              <>
+                <div className="text-emerald-400">✓ imported {result.created.length}{result.skipped ? ` (${result.skipped} skipped)` : ''}</div>
+                {!!result.failed.length && <div className="text-red-400">✗ {result.failed.length} failed</div>}
+              </>
+            ) : (
+              <>
+                {result.created.map(c => <div key={c.id} className="text-emerald-400">#{c.id} imported ({c.source_format})</div>)}
+                {result.failed.map(f => <div key={f.index} className="text-red-400">chunk {f.index}: {f.error}</div>)}
+                {!!result.skipped && <div className="text-slate-400">{result.skipped} junk chunk{result.skipped === 1 ? '' : 's'} skipped</div>}
+              </>
+            )}
           </div>
         )}
       </form>

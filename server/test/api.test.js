@@ -39,10 +39,20 @@ describe('cookies api', () => {
     const a2 = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR }).expect(200)
     expect(a2.body.created[0].source_format).toBe('header')
   })
-  it('bulk import: mixed valid + invalid chunks reported separately', async () => {
+  it('bulk import: junk chunks are skipped, not failed', async () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content: `${NET}\n\nnot a cookie` }).expect(200)
     expect(res.body.created).toHaveLength(1)
-    expect(res.body.failed).toEqual([{ index: 1, error: expect.stringContaining('format') }])
+    expect(res.body.failed).toEqual([])
+    expect(res.body.skipped).toBe(1)
+  })
+  it('bulk import: folder of ULPfile-style txt payloads — one import, junk headers skipped', async () => {
+    const file = banner => `\uFEFF${banner}\nt.me/ULPfile\nâ€“ Email: buyer@example.com\n\n${NET}`
+    const content = [file('Valid Cookie / Every day!'), file('âœ” NETFLIX #2'), file('seller banner #3')].join('\n\n')
+    const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
+    expect(res.body.created).toHaveLength(3)
+    expect(res.body.created.every(c => c.source_format === 'netscape')).toBe(true)
+    expect(res.body.failed).toEqual([])
+    expect(res.body.skipped).toBe(3)
   })
   it('bulk import: cookie-editor json arrays mixed with junk text', async () => {
     const json1 = '[{"name":"NetflixId","value":"syn-1","domain":".netflix.com","path":"/","secure":true,"httpOnly":false,"hostOnly":false,"sameSite":"no_restriction","session":false,"expirationDate":1790000000}]'
@@ -51,7 +61,7 @@ describe('cookies api', () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
     expect(res.body.created).toHaveLength(2)
     expect(res.body.created.every(c => c.source_format === 'json')).toBe(true)
-    expect(res.body.failed).toEqual([])
+    expect(res.body.skipped).toBe(0)
     const h = await agent.get(`/api/cookies/${res.body.created[0].id}/export?format=header`).expect(200)
     expect(h.body.content).toContain('NetflixId=syn-1')
   })
@@ -59,7 +69,7 @@ describe('cookies api', () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content: `${HDR}\n\nNetflixId=hdr-2` }).expect(200)
     expect(res.body.created).toHaveLength(2)
     expect(res.body.created.map(c => c.source_format)).toEqual(['header', 'header'])
-    expect(res.body.failed).toEqual([])
+    expect(res.body.skipped).toBe(0)
   })
   it('unknown service → 400', async () => {
     await agent.post('/api/cookies').send({ service: 'nope', content: HDR }).expect(400)

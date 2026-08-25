@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { encryptJSON, decryptJSON } from '../crypto.js'
 import { aw } from '../asyncHandler.js'
-import { splitBulk, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
+import { splitBulkCounted, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
 const PUBLIC_COLS = 'id, service_key, label, source_format, status, account_info, last_checked_at, notes, created_at, updated_at'
@@ -34,7 +34,7 @@ export function cookieRoutes({ db, engine, adapters }) {
     const adapter = adapters.get(service)
     if (!service || !adapter) return err(res, 'unknown_service', `unknown service: ${service}`, 400)
     if (typeof content !== 'string' || !content.trim()) return err(res, 'invalid_content', 'content is required', 400)
-    const chunks = splitBulk(content)
+    const { chunks, skipped } = splitBulkCounted(content)
     if (chunks.length > MAX_CHUNKS) return err(res, 'too_many', `max ${MAX_CHUNKS} chunks per import`, 400)
     const created = []; const failed = []
     const now = Date.now()
@@ -51,7 +51,7 @@ export function cookieRoutes({ db, engine, adapters }) {
         created.push({ ...row, account_info: row.account_info ? JSON.parse(row.account_info) : null })
       } catch (e) { failed.push({ index: i, error: e.message }) }
     }
-    res.json({ created, failed })
+    res.json({ created, failed, skipped })
   })
 
   r.patch('/:id', (req, res) => {
