@@ -165,6 +165,15 @@ describe('engine', () => {
     const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })]]) })
     expect(engine.startCheckAll(null, 'bogus').queued).toBe(2)
   })
+  it('check-all status filter: non-string value is ignored (no filter applied)', () => {
+    const db = openDb()
+    const ids = seed(db, 'fake', 2)
+    db.prepare('UPDATE cookies SET status=? WHERE id=?').run('live', ids[0])
+    const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter({ status: 'live', reason: '' })]]) })
+    // regex .test() coerces ['unknown'] → 'unknown'; without a type guard this
+    // reaches SQL as an array bind and throws
+    expect(engine.startCheckAll(null, ['unknown']).queued).toBe(2)
+  })
   it('buildDispatcher rejects unsupported protocol', () => {
     const engine = createEngine({ db: openDb(), adapters: new Map() })
     expect(() => engine.buildDispatcher('ftp://x:21')).toThrow(/unsupported/)

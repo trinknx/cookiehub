@@ -147,6 +147,10 @@ describe('cookies api', () => {
     expect(st.body).toMatchObject({ running: false, done: 2, failed: 0 })
     await agent.post('/api/cookies/check-all').send({ status: 'banana' }).expect(400)
   })
+  it('check-all status filter: non-string status → 400 invalid_status', async () => {
+    const r = await agent.post('/api/cookies/check-all').send({ status: ['unknown'] }).expect(400)
+    expect(r.body.error.code).toBe('invalid_status')
+  })
 
   it('remove-die deletes all die cookies across services; live/unknown untouched', async () => {
     const seed = async (status, service = 'netflix') => {

@@ -147,7 +147,7 @@ export function cookieRoutes({ db, engine, adapters }) {
 
   r.post('/check-all', (req, res) => {
     const { service, status } = req.body || {}
-    if (status !== undefined && !/^(unknown|live|die)$/.test(status)) {
+    if (status !== undefined && (typeof status !== 'string' || !/^(unknown|live|die)$/.test(status))) {
       return err(res, 'invalid_status', `invalid status filter: ${status}`, 400)
     }
     try {

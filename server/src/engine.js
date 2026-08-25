@@ -195,9 +195,9 @@ export function createEngine({ db, adapters }) {
     let sql = 'SELECT c.id, c.service_key FROM cookies c LEFT JOIN service_settings s ON s.service_key = c.service_key WHERE COALESCE(s.disabled, 0) = 0'
     const params = []
     if (serviceKey) { sql += ' AND c.service_key = ?'; params.push(serviceKey) }
-    // recheck-unknown & friends: restrict the queue to one status. Invalid values
-    // are ignored (no filter) — the route layer is the one that rejects bad input.
-    if (/^(unknown|live|die)$/.test(statusFilter)) { sql += ' AND c.status = ?'; params.push(statusFilter) }
+    // recheck-unknown & friends: restrict the queue to one status. Non-string or
+    // invalid values are ignored (no filter) — the route layer rejects bad input.
+    if (typeof statusFilter === 'string' && /^(unknown|live|die)$/.test(statusFilter)) { sql += ' AND c.status = ?'; params.push(statusFilter) }
     sql += ' ORDER BY c.id DESC'
     const rows = db.prepare(sql).all(...params)
     job.running = true; job.pending = rows.length; job.done = 0; job.failed = 0
