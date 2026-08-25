@@ -5,6 +5,9 @@ import { splitBulkCounted, detectFormat, parseNetscape, parseHeader, parseJsonAr
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
 const PUBLIC_COLS = 'id, service_key, label, source_format, status, account_info, last_checked_at, notes, created_at, updated_at'
+// match SQL lower() (ASCII-only) when comparing item emails against dup-set keys
+const asciiLower = s => String(s).replace(/[A-Z]/g, c => c.toLowerCase())
+const parseAccountInfo = raw => { if (!raw) return null; try { return JSON.parse(raw) } catch { return null } } // malformed text → null, not a 500
 
 export function cookieRoutes({ db, engine, adapters }) {
   const r = Router()
@@ -20,17 +23,17 @@ export function cookieRoutes({ db, engine, adapters }) {
       params.push(`%${esc}%`, `%${esc}%`, `%${esc}%`)
     }
     const clause = where.length ? 'WHERE ' + where.join(' AND ') : ''
-    const emailCond = "json_extract(account_info,'$.email') IS NOT NULL"
-    const dupWhere = where.length ? `WHERE ${where.join(' AND ')} AND ${emailCond}` : `WHERE ${emailCond}`
-    const dupSet = new Set(db.prepare(`SELECT lower(json_extract(account_info,'$.email')) e FROM cookies ${dupWhere} GROUP BY e HAVING COUNT(*)>1`).all(...params).map(r => r.e))
+    const dupCond = "json_valid(account_info) AND json_extract(account_info,'$.email') IS NOT NULL"
+    const dupWhere = service ? `WHERE service_key = ? AND ${dupCond}` : `WHERE ${dupCond}` // service filter only — badge must reflect removal scope, not list filters
+    const dupSet = new Set(db.prepare(`SELECT lower(json_extract(account_info,'$.email')) e FROM cookies ${dupWhere} GROUP BY e HAVING COUNT(*)>1`).all(...(service ? [service] : [])).map(r => r.e))
     const total = db.prepare(`SELECT COUNT(*) c FROM cookies ${clause}`).get(...params).c
     const rawPage = Number(req.query.page)
     const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1; const limit = 50
     const items = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`)
       .all(...params, limit, (page - 1) * limit)
       .map(row => {
-        const account_info = row.account_info ? JSON.parse(row.account_info) : null
-        const email = account_info?.email != null ? String(account_info.email).toLowerCase() : null
+        const account_info = parseAccountInfo(row.account_info)
+        const email = account_info?.email != null ? asciiLower(account_info.email) : null
         return { ...row, account_info, dup: email ? dupSet.has(email) : false }
       })
     res.json({ items, total, page })
@@ -118,27 +121,27 @@ export function cookieRoutes({ db, engine, adapters }) {
   r.post('/remove-duplicates', (req, res) => {
     const { service } = req.body || {}
     if (service !== undefined && !adapters.has(service)) return err(res, 'unknown_service', `unknown service: ${service}`, 400)
-    const svc = service ? ' AND service_key=?' : ''
-    const rows = db.prepare(`SELECT id, status, lower(json_extract(account_info,'$.email')) e FROM cookies WHERE json_extract(account_info,'$.email') IS NOT NULL${svc}`)
-      .all(...(service ? [service] : []))
-    const groups = new Map()
-    for (const row of rows) {
-      if (!groups.has(row.e)) groups.set(row.e, [])
-      groups.get(row.e).push(row)
-    }
-    const delIds = []
-    let groupCount = 0
-    for (const list of groups.values()) {
-      if (list.length < 2) continue
-      groupCount++
-      const ranked = list.sort((a, b) => (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1) || b.id - a.id)
-      delIds.push(...ranked.slice(1).map(r => r.id))
-    }
-    let removed = 0
-    if (delIds.length) {
-      const ph = delIds.map(() => '?').join(',')
-      removed = db.prepare(`DELETE FROM cookies WHERE id IN (${ph})`).run(...delIds).changes
-    }
+    const select = db.prepare(`SELECT id, status, lower(json_extract(account_info,'$.email')) e FROM cookies WHERE json_valid(account_info) AND json_extract(account_info,'$.email') IS NOT NULL${service ? ' AND service_key=?' : ''}`)
+    const run = db.transaction(() => {
+      const rows = select.all(...(service ? [service] : []))
+      const groups = new Map()
+      for (const row of rows) {
+        if (!groups.has(row.e)) groups.set(row.e, [])
+        groups.get(row.e).push(row)
+      }
+      const delIds = []
+      let groupCount = 0
+      for (const list of groups.values()) {
+        if (list.length < 2) continue
+        groupCount++
+        const ranked = list.sort((a, b) => (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1) || b.id - a.id)
+        delIds.push(...ranked.slice(1).map(r => r.id))
+      }
+      // json_each: one bind param regardless of id count
+      const removed = delIds.length ? db.prepare('DELETE FROM cookies WHERE id IN (SELECT value FROM json_each(?))').run(JSON.stringify(delIds)).changes : 0
+      return { removed, groupCount }
+    })
+    const { removed, groupCount } = run()
     res.json({ removed, kept: groupCount, groups: groupCount })
   })
 

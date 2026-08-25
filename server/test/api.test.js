@@ -217,6 +217,51 @@ describe('cookies api', () => {
     await agent.post('/api/cookies/remove-duplicates').send({ service: 'nope' }).expect(400)
   })
 
+  it('dup flag ignores status/q filters (matches removal scope): live row stays dup:true under status=live filter', async () => {
+    const seed = async (email, status) => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, account_info=? WHERE id=?').run(status, JSON.stringify({ email }), created[0].id)
+      return created[0].id
+    }
+    await seed('a@x', 'die')
+    const live = await seed('a@x', 'live')
+    await seed('b@y', 'live')
+    const filtered = await agent.get('/api/cookies?status=live').expect(200)
+    expect(filtered.body.items).toHaveLength(2) // live a@x + live b@y
+    const liveDup = filtered.body.items.find(i => i.id === live)
+    expect(liveDup.dup).toBe(true) // its die twin exists → duplicate, even though filtered out here
+    expect(filtered.body.items.find(i => i.account_info?.email === 'b@y').dup).toBe(false)
+  })
+
+  it('malformed account_info row does not break list or remove-duplicates', async () => {
+    const seed = async (accountInfo, status) => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, account_info=? WHERE id=?').run(status, accountInfo, created[0].id)
+      return created[0].id
+    }
+    const a1 = await seed(JSON.stringify({ email: 'a@x' }), 'die')
+    const a2 = await seed(JSON.stringify({ email: 'a@x' }), 'live')
+    const bad = await seed('not json', 'die')
+    const list = await agent.get('/api/cookies').expect(200) // no 500 despite malformed row
+    expect(list.body.items.find(i => i.id === bad).dup).toBe(false)
+    const r = await agent.post('/api/cookies/remove-duplicates').send({}).expect(200)
+    expect(r.body).toEqual({ removed: 1, kept: 1, groups: 1 })
+    const after = await agent.get('/api/cookies').expect(200)
+    expect(after.body.items.map(i => i.id).sort((x, y) => x - y)).toEqual([a2, bad].sort((x, y) => x - y)) // malformed row untouched
+  })
+
+  it('remove-duplicates handles 1201-row duplicate group (bind-limit regression)', async () => {
+    const insert = ctx.db.prepare('INSERT INTO cookies(service_key,label,content_enc,source_format,notes,created_at,updated_at,status,account_info) VALUES(?,?,?,?,?,?,?,?,?)')
+    ctx.db.transaction(() => {
+      for (let i = 0; i < 1201; i++) insert.run('netflix', '', 'x', 'header', '', Date.now(), Date.now(), i === 0 ? 'live' : 'die', JSON.stringify({ email: 'bulk@x' }))
+    })()
+    const r = await agent.post('/api/cookies/remove-duplicates').send({}).expect(200)
+    expect(r.body).toEqual({ removed: 1200, kept: 1, groups: 1 })
+    const list = await agent.get('/api/cookies').expect(200)
+    expect(list.body.items).toHaveLength(1)
+    expect(list.body.items[0].status).toBe('live')
+  })
+
   it('POST /:id/nftoken returns link+expires; unknown id → 404', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const r = await agent.post(`/api/cookies/${created[0].id}/nftoken`).expect(200)
