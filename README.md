@@ -5,6 +5,7 @@ Personal single-user cookie manager (Netscape + header string) with live/die che
 ## Features
 
 - Import/export cookies as Netscape or header string (auto-detected, bulk import via blank-line separation)
+- Import Cookie-Editor JSON array files (bulk files with mixed text — JSON arrays auto-extracted)
 - LIVE/DIE checks with account info (email, plan, expiry, country where available)
 - Manual per-cookie / check-all + scheduled auto-check (interval-based, 1-168h)
 - Per-service or global proxy support (http/https/socks5)

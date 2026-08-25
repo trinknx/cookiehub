@@ -147,24 +147,24 @@ describe('converters', () => {
 })
 
 describe('splitBulk JSON array extraction', () => {
-  it('extracts 2 JSON arrays + 1 header chunk from a mixed seller file', () => {
+  it('extracts 2 JSON arrays from a mixed seller file, discarding surrounding text', () => {
     const chunks = splitBulk(MIXED_FILE)
-    expect(chunks.filter(c => detectFormat(c) === 'json')).toHaveLength(2)
-    const headerChunks = chunks.filter(c => detectFormat(c) === 'header')
-    expect(headerChunks).toEqual(['NetflixId=hdr-synthetic; SecureSessionId=hdr-synthetic-2'])
-    expect(chunks[0]).toBe(JSON_ARR_1)
-    expect(chunks[1]).toBe(JSON_ARR_2)
+    expect(chunks).toEqual([JSON_ARR_1, JSON_ARR_2])
+    expect(chunks.every(c => detectFormat(c) === 'json')).toBe(true)
   })
   it('brackets inside JSON string values do not break span extraction', () => {
     const span = '[{"name": "a", "value": "a]b"}, {"name": "q", "value": "esc\\"aped]"}]'
     const chunks = splitBulk(`junk line\n${span}\nmore junk`)
-    expect(chunks[0]).toBe(span)
+    expect(chunks).toEqual([span])
     const parsed = parseJsonArray(chunks[0], '.x.com')
     expect(parsed[0].value).toBe('a]b')
     expect(parsed[1].value).toBe('esc"aped]')
   })
-  it('skips empty arrays and leaves non-object arrays as plain text', () => {
-    expect(splitBulk('[]')).toEqual([])
+  it('pure legacy text with no JSON spans still splits on blank lines', () => {
+    expect(splitBulk('NetflixId=a\n\nNetflixId=b; SecureSessionId=c')).toEqual(['NetflixId=a', 'NetflixId=b; SecureSessionId=c'])
+  })
+  it('non-extractable brackets keep the full text in legacy splitting', () => {
+    expect(splitBulk('[]')).toEqual(['[]'])
     expect(splitBulk('before [1,2] after')).toEqual(['before [1,2] after'])
   })
   it('unbalanced bracket leaves text exactly as today', () => {

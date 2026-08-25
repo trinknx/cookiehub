@@ -51,8 +51,15 @@ describe('cookies api', () => {
     const res = await agent.post('/api/cookies').send({ service: 'netflix', content }).expect(200)
     expect(res.body.created).toHaveLength(2)
     expect(res.body.created.every(c => c.source_format === 'json')).toBe(true)
+    expect(res.body.failed).toEqual([])
     const h = await agent.get(`/api/cookies/${res.body.created[0].id}/export?format=header`).expect(200)
     expect(h.body.content).toContain('NetflixId=syn-1')
+  })
+  it('pure legacy bulk payload still splits on blank lines', async () => {
+    const res = await agent.post('/api/cookies').send({ service: 'netflix', content: `${HDR}\n\nNetflixId=hdr-2` }).expect(200)
+    expect(res.body.created).toHaveLength(2)
+    expect(res.body.created.map(c => c.source_format)).toEqual(['header', 'header'])
+    expect(res.body.failed).toEqual([])
   })
   it('unknown service → 400', async () => {
     await agent.post('/api/cookies').send({ service: 'nope', content: HDR }).expect(400)

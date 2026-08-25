@@ -31,14 +31,13 @@ function tryParseArray(span) {
   } catch { return null }
 }
 
-// Bulk split: balanced JSON arrays (Cookie-Editor exports, possibly pretty-printed
-// inside seller files full of header junk) are extracted first as single chunks;
-// the remaining text falls back to blank-line splitting.
+// Bulk split. Extraction mode: balanced JSON arrays (Cookie-Editor exports,
+// possibly pretty-printed inside seller files full of header junk) are the ONLY
+// thing that matters — when ≥1 array is found the surrounding text is discarded
+// entirely. With zero arrays, input falls back to legacy blank-line splitting.
 export function splitBulk(text) {
   const src = String(text)
   const spans = []
-  const outside = []
-  let plainStart = 0
   let i = 0
   while (i < src.length) {
     if (src[i] === '[') {
@@ -46,18 +45,17 @@ export function splitBulk(text) {
       if (end !== -1) {
         const span = src.slice(i, end + 1)
         const parsed = tryParseArray(span)
-        if (parsed && (parsed.length === 0 || isPlainObject(parsed[0]))) {
-          outside.push(src.slice(plainStart, i))
-          if (parsed.length > 0) spans.push(span)
-          i = plainStart = end + 1
+        if (parsed && isPlainObject(parsed[0])) {
+          spans.push(span)
+          i = end + 1
           continue
         }
       }
     }
     i++
   }
-  outside.push(src.slice(plainStart))
-  return [...spans, ...outside.join('').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)]
+  if (spans.length) return spans
+  return src.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean)
 }
 
 export function detectFormat(chunk) {

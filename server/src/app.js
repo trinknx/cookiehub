@@ -10,7 +10,7 @@ export function buildApp({ db, adapters, engine, scheduler }) {
   // behind Caddy every client is 127.0.0.1; trust one proxy hop so req.ip (rate limiting)
   // honors X-Forwarded-For instead of sharing one global bucket
   if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
-  app.use(express.json({ limit: '12mb' })) // spec bulk import: up to 100 × 100KB chunks
+  app.use(express.json({ limit: '12mb' })) // spec bulk import: up to 500 × 100KB chunks; theoretical 50MB max exceeds this cap — oversized payloads are rejected here, real bulk files run ~1-2MB
   app.use(cookieParser())
   // csrfGuard before authRoutes: login/setup/logout are state-changing and must not be CSRF-able
   app.use('/api/auth', csrfGuard, authRoutes(db))

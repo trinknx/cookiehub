@@ -141,10 +141,11 @@ Canonical internal (lưu trong `content_enc` sau khi mã hóa):
 4. JSON array (Cookie-Editor): chunk là mảng JSON, mỗi phần tử một object
    `{name, value, domain, path, secure, httpOnly, expirationDate (epoch
    giây)...}`; auto-detect khi ≥1 phần tử là object có `name` string. Khi tách
-   bulk, các JSON array (in nhiều dòng) được bóc theo cặp ngoặc `[]` cân bằng
-   trước — bỏ qua text rác bao quanh (dòng tiêu đề, separator trong file
-   seller); dấu `]` nằm trong chuỗi giá trị JSON không làm lệch việc tách. Phần
-   text còn lại mới áp dụng tách theo dòng trống
+   bulk, các JSON array (in nhiều dòng) được bóc theo cặp ngoặc `[]` cân bằng —
+   chỉ quan tâm các mảng JSON: toàn bộ text bao quanh (dòng tiêu đề,
+   separator, header string trộn lẫn trong file seller) bị bỏ đi hết; dấu `]`
+   nằm trong chuỗi giá trị JSON không làm lệch việc tách. Tách theo dòng trống
+   (mục 1) chỉ áp dụng khi file không chứa JSON array nào
 5. Không khớp → reject chunk, báo lỗi per-item
 
 ### Chuyển đổi
