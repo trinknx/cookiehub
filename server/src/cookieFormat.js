@@ -180,6 +180,24 @@ export function toHeaderString(cookies) {
   return cookies.map(c => `${c.name}=${c.value}`).join('; ')
 }
 
+// Cookie-Editor (Chrome/Firefox extension) import format. __Secure-/__Host-
+// prefixed cookies are silently DROPPED by Chrome without the secure flag —
+// force it so an export always re-imports cleanly.
+export function toCookieEditor(cookies) {
+  return JSON.stringify(cookies.map(c => ({
+    domain: c.domain || '',
+    expirationDate: c.expiration != null ? Math.floor(c.expiration / 1000) : undefined,
+    hostOnly: !(c.domain || '').startsWith('.'),
+    httpOnly: !!c.httpOnly,
+    name: c.name,
+    path: c.path || '/',
+    sameSite: c.sameSite || 'unspecified',
+    secure: c.secure || /^__(Secure|Host)-/i.test(c.name || ''),
+    session: c.expiration == null,
+    value: c.value || ''
+  })), null, 2)
+}
+
 const FAR = 2147483647
 export function toNetscape(cookies) {
   const lines = ['# Netscape HTTP Cookie File']

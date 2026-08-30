@@ -97,17 +97,32 @@ export function createEngine({ db, adapters }) {
     lastReq.set(serviceKey, startAt)
     const wait = startAt - Date.now()
     if (wait > 0) await sleep(wait)
-    const ctrl = new AbortController()
-    // Never clear this timer: it must stay armed until the 15s deadline even after
-    // response headers arrive — otherwise a stalled res.text()/res.json() body read
-    // would hold a semaphore slot forever. Aborting an already-settled fetch is a
-    // no-op; pending body reads reject on abort.
-    setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-    // undici has no cookie jar, so the stored cookies must go out as a header.
-    // mergeRequestHeaders goes through the standard Headers API so any header
-    // form (object/Headers/entries) survives; an adapter-supplied cookie wins.
-    const headers = mergeRequestHeaders(init.headers, cookieHeader, UA)
-    return await undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
+    const attempt = () => {
+      const ctrl = new AbortController()
+      // Never clear this timer: it must stay armed until the 15s deadline even after
+      // response headers arrive — otherwise a stalled res.text()/res.json() body read
+      // would hold a semaphore slot forever. Aborting an already-settled fetch is a
+      // no-op; pending body reads reject on abort.
+      setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+      // undici has no cookie jar, so the stored cookies must go out as a header.
+      // mergeRequestHeaders goes through the standard Headers API so any header
+      // form (object/Headers/entries) survives; an adapter-supplied cookie wins.
+      const headers = mergeRequestHeaders(init.headers, cookieHeader, UA)
+      return undiciFetch(url, { ...init, dispatcher, signal: ctrl.signal, headers })
+    }
+    try {
+      return await attempt()
+    } catch (e) {
+      // Rotating-residential proxies drop a small share of connects mid-check
+      // (measured 2026-08-26: ~1 in 8 cold, 0 warm); the blip is gone by the
+      // next attempt. Retry once, GETs only — POSTs (tv8 code submit, family
+      // fetches) can have side effects and must not replay.
+      const method = String(init.method || 'GET').toUpperCase()
+      const transient = e?.name === 'AbortError' || e?.name === 'TypeError' || /fetch failed|aborted/i.test(String(e?.message))
+      if (method !== 'GET' || !transient) throw e
+      await sleep(500)
+      return await attempt()
+    }
   }
 
   async function runCheck(cookieId) {

@@ -3,7 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import netflix from '../src/adapters/netflix.js'
+import netflix, { parseNetflixProfiles } from '../src/adapters/netflix.js'
 import spotify from '../src/adapters/spotify.js'
 import chatgpt from '../src/adapters/chatgpt.js'
 import claude from '../src/adapters/claude.js'
@@ -18,6 +18,20 @@ const res = (status, body = '', headers = {}) => ({
 const ctxOf = responses => {
   let i = 0
   return { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async () => responses[i++] }
+}
+
+// Real /browse bytes shape (verified on 30 live cookies, 2026-08-29): a
+// `netflix.falcorCache = {…};` JS assignment — $type keys arrive hex-escaped
+// (\x24type), names arrive HTML-entity-escaped (Latin-1 named, numeric above
+// U+00FF), and trailing profilesList slots are placeholder atoms.
+const FALCOR_PAGE = [
+  '<script>window.netflix = window.netflix || {};',
+  'netflix.falcorCache = {"profilesList":{"0":{"\\x24type":"ref","value":["profiles","G1"]},"1":{"\\x24type":"ref","value":["profiles","G2"]},"2":{"\\x24type":"atom"},"summary":{"\\x24type":"atom","value":{"length":2}},"current":{"\\x24type":"ref","value":["profiles","G1"]}},"profiles":{"G1":{"summary":{"\\x24type":"atom","value":{"profileName":"victor-ka2010","guid":"G1","isAccountOwner":true,"isActive":true,"isKids":false,"maturityLevel":"ADULTS"}}},"G2":{"summary":{"\\x24type":"atom","value":{"profileName":"Crian&ccedil;a Tr&#x1EBB; em &#x1F970;","guid":"G2","isAccountOwner":false,"isActive":false,"isKids":true,"maturityLevel":"OLDER_KIDS"}}}}};',
+  '</script>'
+].join('\n')
+const PROFILES = {
+  count: 2, kidsCount: 1,
+  list: [{ name: 'victor-ka2010', isKids: false }, { name: 'Crian\u00e7a Tr\u1ebb em \u{1F970}', isKids: true }]
 }
 
 describe('netflix adapter', () => {
@@ -108,7 +122,7 @@ describe('netflix adapter', () => {
   // the form-render model is embedded as PLAIN-quote JSON — no backslash escapes
   // anywhere. reactContext string values DO carry JS hex escapes (\x40 = @,
   // \x20 = space) that must be unescaped before storing; String.raw keeps them.
-  const FORM_MODEL = '"currentPlan":{"fieldType":"Group","fieldGroup":"MemberPlan","fields":{"localizedPlanName":{"fieldType":"String","value":"Standard"},"maxStreams":{"fieldType":"Numeric","value":2},"videoQuality":{"fieldType":"String","value":"HD"},"planId":{"fieldType":"String","value":"10341"},"hasAds":{"fieldType":"Boolean","value":false}},"memberSince":{"fieldType":"Numeric","value":1701993600000}'
+  const FORM_MODEL = '"currentPlan":{"fieldType":"Group","fieldGroup":"MemberPlan","fields":{"localizedPlanName":{"fieldType":"String","value":"Standard"},"maxStreams":{"fieldType":"Numeric","value":2},"videoQuality":{"fieldType":"String","value":"HD"},"planId":{"fieldType":"String","value":"10341"},"hasAds":{"fieldType":"Boolean","value":false}},"nextBillingDate":{"fieldType":"String","value":"24\\x20September\\x202026"}'
   const REACT_CONTEXT = String.raw`"name":"Himachandan","emailAddress":"mikekugler1\x40gmail.com","currentCountry":"US","memberSince":"December\x202023"`
   const ACCOUNT_HTML = [
     `<script>reactContext = {"userInfo":{"data":{${REACT_CONTEXT}}}};</script>`,
@@ -130,7 +144,22 @@ describe('netflix adapter', () => {
       email: 'mikekugler1@gmail.com',
       country: 'US',
       memberSince: 'December 2023',
+      nextBilling: '24 September 2026', // \x20 unescaped; decoy data-uia="next-bill-date" ignored
+      nextBillingIso: '2026-09-24',
       extra: { maxStreams: 2, videoQuality: 'HD' }
+    })
+  })
+  it('localized VN page → canonical plan tier + planLocalized + VN billing ISO', async () => {
+    const html = [
+      `<script>reactContext = {"userInfo":{"data":{"emailAddress":"vn\\x40x.com","currentCountry":"VN","memberSince":"th\\u00E1ng\\x208\\x20n\\u0103m\\x202026"}}};</script>`,
+      `<script type="application/json">"fields":{"localizedPlanName":{"fieldType":"String","value":"Cao\\x20c\\u1EA5p"},"maxStreams":{"fieldType":"Numeric","value":4},"videoQuality":{"fieldType":"String","value":"UHD"},"hasAds":{"fieldType":"Boolean",value:false},"nextBillingDate":{"fieldType":"String","value":"26\\x20th\\u00E1ng\\x209,\\x202026"}}</script>`
+    ].join('\n')
+    const r = await netflix.check(ctxOf([res(200, '<html>browse</html>'), res(200, html)]))
+    expect(r.accountInfo).toMatchObject({
+      plan: 'Premium',           // derived from UHD + 4 streams, not the localized name
+      planLocalized: 'Cao cấp',  // original survives for the tooltip
+      nextBilling: '26 tháng 9, 2026',
+      nextBillingIso: '2026-09-26' // localized date still parses
     })
   })
   it('account fetch failure still → live, browse country must not leak', async () => {
@@ -140,11 +169,60 @@ describe('netflix adapter', () => {
     expect(r.status).toBe('live')
     expect(r.accountInfo).toBeUndefined()
   })
+  it('live check attaches the profile list from the browse page — zero extra fetches', async () => {
+    const urls = []
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async u => { urls.push(u); return [res(200, FALCOR_PAGE), res(200, ACCOUNT_HTML)][urls.length - 1] } }
+    const r = await netflix.check(ctx)
+    expect(r.status).toBe('live')
+    expect(r.accountInfo.profiles).toEqual(PROFILES)
+    expect(urls).toEqual(['https://www.netflix.com/browse', 'https://www.netflix.com/account'])
+  })
+  it('browse without falcorCache falls back to /profiles/manage after /account', async () => {
+    const urls = []
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async u => { urls.push(u); return [res(200, '<html>browse — no cache</html>'), res(200, ACCOUNT_HTML), res(200, FALCOR_PAGE)][urls.length - 1] } }
+    const r = await netflix.check(ctx)
+    expect(r.accountInfo.profiles).toEqual(PROFILES)
+    expect(urls[2]).toBe('https://www.netflix.com/profiles/manage')
+  })
+  it('profiles fallback failure never downgrades a live result', async () => {
+    let call = 0
+    const ctx = { cookieHeader: 'a=1', cookies: [], log: () => {}, fetch: async () => { if (call++ === 0) return res(200, '<html>browse</html>'); throw new Error('boom') } }
+    const r = await netflix.check(ctx)
+    expect(r.status).toBe('live')
+    expect(r.accountInfo).toBeUndefined()
+  })
   it('429 → throws (transient, not die)', async () => {
     await expect(netflix.check(ctxOf([res(429)]))).rejects.toThrow('HTTP 429')
   })
   it('500 → throws (transient, not die)', async () => {
     await expect(netflix.check(ctxOf([res(500)]))).rejects.toThrow('HTTP 500')
+  })
+})
+
+describe('parseNetflixProfiles', () => {
+  it('stops at placeholder atoms, flags kids, decodes named + numeric entities', () => {
+    expect(parseNetflixProfiles(FALCOR_PAGE)).toEqual({
+      count: 2, kidsCount: 1,
+      list: [{ name: 'victor-ka2010', isKids: false }, { name: 'Crian\u00e7a Tr\u1ebb em \u{1F970}', isKids: true }]
+    })
+  })
+  it('plain-quote falcor JSON parses too (no \\x escapes)', () => {
+    const html = 'netflix.falcorCache = {"profilesList":{"0":{"$type":"ref","value":["profiles","G"]},"summary":{"$type":"atom","value":{"length":1}}},"profiles":{"G":{"summary":{"$type":"atom","value":{"profileName":"a&quot;b","isKids":false}}}}}'
+    expect(parseNetflixProfiles(html)).toEqual({ count: 1, kidsCount: 0, list: [{ name: 'a"b', isKids: false }] })
+  })
+  it('unknown named entities stay verbatim', () => {
+    const html = 'netflix.falcorCache = {"profilesList":{"0":{"$type":"ref","value":["profiles","G"]}},"profiles":{"G":{"summary":{"$type":"atom","value":{"profileName":"x&nope;","isKids":false}}}}}'
+    expect(parseNetflixProfiles(html).list[0].name).toBe('x&nope;')
+  })
+  it('returns null: no falcorCache, truncated literal, empty list, broken JSON', () => {
+    expect(parseNetflixProfiles('<html>marketing page</html>')).toBeNull()
+    expect(parseNetflixProfiles('netflix.falcorCache = {"profiles":')).toBeNull()
+    expect(parseNetflixProfiles('netflix.falcorCache = {"profilesList":{"0":{"$type":"atom"}}}')).toBeNull()
+    expect(parseNetflixProfiles('netflix.falcorCache = {oops}')).toBeNull()
+  })
+  it('braces inside string values do not end the walk', () => {
+    const html = 'netflix.falcorCache = {"profilesList":{"0":{"$type":"ref","value":["profiles","G"]}},"profiles":{"G":{"summary":{"$type":"atom","value":{"profileName":"a}b{c","isKids":false}}}}}'
+    expect(parseNetflixProfiles(html).list[0].name).toBe('a}b{c')
   })
 })
 
@@ -158,7 +236,7 @@ describe('netflix nftoken', () => {
   ]
   const okBody = token => ({ ok: true, status: 200, json: async () => ({ value: { account: { token: { default: { token, expires: 1790000000000 } } } } }) })
 
-  it('requests the Argo endpoint and returns link+expires', async () => {
+  it('requests the Argo endpoint and returns web+app links and expires', async () => {
     const calls = []
     const fetch = async (url, init) => { calls.push({ url, init }); return okBody('tök=en&+') }
     const r = await netflix.nftoken({ cookies: COOKIES, fetch, log: () => {} })
@@ -172,7 +250,11 @@ describe('netflix nftoken', () => {
     expect(calls[0].init.headers['x-netflix.client.type']).toBe('argo')
     // only the three auth cookies go out
     expect(calls[0].init.headers.cookie).toBe('NetflixId=v%3D-1; SecureNetflixId=v-2; nfvdid=d-1')
-    expect(r).toEqual({ link: 'https://netflix.com/?nftoken=' + encodeURIComponent('tök=en&+'), expires: 1790000000000 })
+    expect(r).toEqual({
+      link: 'https://netflix.com/?nftoken=' + encodeURIComponent('tök=en&+'),
+      linkApp: 'https://netflix.com/val?nftoken=' + encodeURIComponent('tök=en&+'),
+      expires: 1790000000000
+    })
   })
   it('missing NetflixId → throws before any fetch', async () => {
     const calls = []

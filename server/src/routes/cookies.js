@@ -1,10 +1,31 @@
 import { Router } from 'express'
 import { encryptJSON, decryptJSON } from '../crypto.js'
 import { aw } from '../asyncHandler.js'
-import { splitBulkCounted, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
+import { splitBulkCounted, detectFormat, parseNetscape, parseHeader, parseJsonArray, toHeaderString, toNetscape, toCookieEditor, MAX_CHUNK_BYTES, MAX_CHUNKS } from '../cookieFormat.js'
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
 const PUBLIC_COLS = 'id, service_key, label, source_format, status, account_info, last_checked_at, notes, created_at, updated_at'
+// Tag sorting: whitelisted SQL fragments only — the client's ?sort= value is a
+// KEY into this map, never interpolated text. json_valid guards every extract
+// (malformed legacy account_info rows must not 500 the list). Quality rank
+// mirrors the client's qualityTag precedence: 4K/UHD > 1080/HD > 720 > SD.
+const QQUAL = "json_extract(account_info,'$.extra.videoQuality')"
+const SORTS = {
+  plan: "json_extract(account_info,'$.plan')",
+  country: "json_extract(account_info,'$.country')",
+  billing: "json_extract(account_info,'$.nextBillingIso')",
+  quality: `CASE WHEN json_valid(account_info) THEN (CASE
+    WHEN lower(${QQUAL}) LIKE '%4k%' OR lower(${QQUAL}) LIKE '%uhd%' THEN 4
+    WHEN lower(${QQUAL}) LIKE '%720%' THEN 2
+    WHEN lower(${QQUAL}) LIKE '%hd%' OR lower(${QQUAL}) LIKE '%1080%' THEN 3
+    WHEN lower(${QQUAL}) LIKE '%sd%' THEN 1 END) END` // no rank / invalid JSON → NULL → NULLS LAST
+}
+const sortExpr = raw => {
+  if (typeof raw !== 'string' || !raw) return null
+  const desc = raw.startsWith('-')
+  const expr = SORTS[desc ? raw.slice(1) : raw]
+  return expr ? `${expr} ${desc ? 'DESC' : 'ASC'} NULLS LAST, id DESC` : null
+}
 // match SQL lower() (ASCII-only) when comparing item emails against dup-set keys
 const asciiLower = s => String(s).replace(/[A-Z]/g, c => c.toLowerCase())
 const parseAccountInfo = raw => { if (!raw) return null; try { return JSON.parse(raw) } catch { return null } } // malformed text → null, not a 500
@@ -29,7 +50,7 @@ export function cookieRoutes({ db, engine, adapters }) {
     const total = db.prepare(`SELECT COUNT(*) c FROM cookies ${clause}`).get(...params).c
     const rawPage = Number(req.query.page)
     const page = Number.isInteger(rawPage) && rawPage >= 1 ? rawPage : 1; const limit = 50
-    const items = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies ${clause} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    const items = db.prepare(`SELECT ${PUBLIC_COLS} FROM cookies ${clause} ORDER BY ${sortExpr(req.query.sort) || 'id DESC'} LIMIT ? OFFSET ?`)
       .all(...params, limit, (page - 1) * limit)
       .map(row => {
         const account_info = parseAccountInfo(row.account_info)
@@ -84,9 +105,10 @@ export function cookieRoutes({ db, engine, adapters }) {
   r.get('/:id/export', (req, res) => {
     const row = db.prepare('SELECT * FROM cookies WHERE id=?').get(req.params.id)
     if (!row) return err(res, 'not_found', 'cookie not found', 404)
-    const format = req.query.format === 'netscape' ? 'netscape' : 'header'
+    const format = ['netscape', 'json'].includes(req.query.format) ? req.query.format : 'header'
     const cookies = decryptJSON(row.content_enc)
-    res.json({ content: format === 'netscape' ? toNetscape(cookies) : toHeaderString(cookies) })
+    const content = format === 'netscape' ? toNetscape(cookies) : format === 'json' ? toCookieEditor(cookies) : toHeaderString(cookies)
+    res.json({ content })
   })
 
   r.get('/:id/logs', (req, res) => {

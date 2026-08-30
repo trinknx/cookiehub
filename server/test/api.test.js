@@ -1,13 +1,18 @@
+import { randomBytes } from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
 import request from 'supertest'
+import Database from 'better-sqlite3'
 import { openDb } from '../src/db.js'
 import { buildApp } from '../src/app.js'
 import { createEngine } from '../src/engine.js'
-import { initEncryption, generateKeyB64 } from '../src/crypto.js'
+import { initEncryption, generateKeyB64, encryptJSON } from '../src/crypto.js'
 
 const NET = '.netflix.com\tTRUE\t/\tTRUE\t1790000000\tNetflixId\tv-2'
 const HDR = 'NetflixId=v-2; SecureSessionId=x'
-const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }), nftoken: async () => ({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 }), linkTv: async (_ctx, code) => { if (code === 'DEADCODE') { const e = new Error('invalid or expired TV code'); e.status = 400; throw e } return { ok: true, message: 'TV linked — check your TV' } } }
+const adapter = { key: 'netflix', name: 'Netflix', defaultDomain: '.netflix.com', check: async () => ({ status: 'live', reason: 'ok' }), nftoken: async () => ({ link: 'https://netflix.com/?nftoken=abc%3D', linkApp: 'https://netflix.com/val?nftoken=abc%3D', expires: 1790000000000 }), linkTv: async (_ctx, code) => { if (code === 'DEADCODE') { const e = new Error('invalid or expired TV code'); e.status = 400; throw e } return { ok: true, message: 'TV linked — check your TV' } } }
 // spotify fixture is registered per-test via ctx.adapters.set — adding it to the
 // shared map would break the exact services-list assertion further down
 const spotifyFamily = (familyImpl = async () => ({
@@ -119,12 +124,49 @@ describe('cookies api', () => {
     expect(list.body.items[0]).not.toHaveProperty('content_enc')
     expect((await agent.get('/api/cookies?status=live')).body.total).toBe(0)
   })
-  it('export header + netscape round-trip', async () => {
+  it('sort=quality ranks SD < 1080 < 4K, missing quality last in both directions', async () => {
+    const seed = async info => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      if (info !== null) ctx.db.prepare('UPDATE cookies SET account_info=? WHERE id=?').run(JSON.stringify(info), created[0].id)
+      return created[0].id
+    }
+    const none = await seed(null)
+    const sd = await seed({ extra: { videoQuality: 'Good (SD)' } })
+    const hd = await seed({ extra: { videoQuality: '1080p (Full HD)' } })
+    const uhd = await seed({ extra: { videoQuality: '4K (Ultra HD)' } })
+    const ids = r => r.body.items.map(i => i.id)
+    expect(ids(await agent.get('/api/cookies?sort=quality').expect(200))).toEqual([sd, hd, uhd, none])
+    expect(ids(await agent.get('/api/cookies?sort=-quality').expect(200))).toEqual([uhd, hd, sd, none])
+  })
+  it('sort=billing orders ISO dates, not display strings; unknown key falls back to id DESC', async () => {
+    const seed = async iso => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      const info = iso ? { nextBilling: 'x ' + iso, nextBillingIso: iso } : { plan: 'Standard' } // ISO-less: parse failed at capture time
+      ctx.db.prepare('UPDATE cookies SET account_info=? WHERE id=?').run(JSON.stringify(info), created[0].id)
+      return created[0].id
+    }
+    const late = await seed('2027-01-05')
+    const soon = await seed('2026-09-24')
+    const noDate = await seed(null) // row without nextBillingIso must land last, not sort by display junk
+    const ids = r => r.body.items.map(i => i.id)
+    expect(ids(await agent.get('/api/cookies?sort=billing').expect(200))).toEqual([soon, late, noDate])
+    expect(ids(await agent.get('/api/cookies?sort=-billing').expect(200))).toEqual([late, soon, noDate])
+    expect(ids(await agent.get('/api/cookies?sort=evil;DROP').expect(200))).toEqual([noDate, soon, late]) // id DESC, unknown sort ignored
+  })
+  it('export header + netscape + Cookie-Editor json', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const h = await agent.get(`/api/cookies/${created[0].id}/export?format=header`).expect(200)
     expect(h.body.content).toBe(HDR)
     const n = await agent.get(`/api/cookies/${created[0].id}/export?format=netscape`).expect(200)
     expect(n.body.content).toContain('.netflix.com\t')
+    const j = await agent.get(`/api/cookies/${created[0].id}/export?format=json`).expect(200)
+    const arr = JSON.parse(j.body.content)
+    expect(arr).toHaveLength(2)
+    expect(arr[0]).toMatchObject({ name: 'NetflixId', domain: '.netflix.com', path: '/' })
+    // __Secure- prefix forces secure:true even when stored false — Chrome drops these silently otherwise
+    ctx.db.prepare('UPDATE cookies SET content_enc=? WHERE id=?').run(encryptJSON([{ name: '__Secure-x', value: '1', domain: '.a.com', path: '/', secure: false, httpOnly: false, expiration: null }]), created[0].id)
+    const j2 = await agent.get(`/api/cookies/${created[0].id}/export?format=json`).expect(200)
+    expect(JSON.parse(j2.body.content)[0].secure).toBe(true)
   })
   it('check runs engine and updates status; logs endpoint returns history', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
@@ -289,10 +331,10 @@ describe('cookies api', () => {
     expect(list.body.items[0].status).toBe('live')
   })
 
-  it('POST /:id/nftoken returns link+expires; unknown id → 404', async () => {
+  it('POST /:id/nftoken returns web+app links+expires; unknown id → 404', async () => {
     const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
     const r = await agent.post(`/api/cookies/${created[0].id}/nftoken`).expect(200)
-    expect(r.body).toEqual({ link: 'https://netflix.com/?nftoken=abc%3D', expires: 1790000000000 })
+    expect(r.body).toEqual({ link: 'https://netflix.com/?nftoken=abc%3D', linkApp: 'https://netflix.com/val?nftoken=abc%3D', expires: 1790000000000 })
     await agent.post('/api/cookies/99999/nftoken').expect(404)
   })
 
@@ -366,5 +408,46 @@ describe('services + settings api', () => {
     await agent.patch('/api/services/netflix').send({ proxy: 'socks5h://1.2.3.4:1080' }).expect(200)
     await agent.patch('/api/services/netflix').send({ proxy: 'direct' }).expect(200)
     expect((await agent.get('/api/services')).body[0].proxy).toBe('direct')
+  })
+})
+
+describe('backup + restore api', () => {
+  let agent
+  const binary = (res, cb) => { const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => cb(null, Buffer.concat(chunks))) }
+  beforeEach(async () => { agent = await login() })
+
+  it('GET /api/backup → valid sqlite snapshot; POST restores a wiped db', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'keep-me' })
+    const dl = await agent.get('/api/backup').buffer().parse(binary).expect(200)
+    expect(dl.headers['content-type']).toContain('application/octet-stream')
+    expect(dl.headers['content-disposition']).toMatch(/cookiehub-backup-.*\.db/)
+    expect(dl.body.subarray(0, 15).toString()).toBe('SQLite format 3')
+    const snap = new Database(dl.body) // snapshot is a real, queryable db
+    expect(snap.prepare('SELECT COUNT(*) c FROM cookies').get().c).toBe(1)
+    snap.close()
+    ctx.db.prepare('DELETE FROM cookies').run() // wipe live, then restore
+    expect((await agent.get('/api/cookies')).body.total).toBe(0)
+    const r = await agent.post('/api/backup').set('content-type', 'application/octet-stream').send(dl.body).expect(200)
+    expect(r.body.ok).toBe(true)
+    expect(r.body.restored.cookies).toBe(1)
+    const after = await agent.get('/api/cookies')
+    expect(after.body.total).toBe(1)
+    expect(after.body.items[0].label).toBe('keep-me')
+  })
+  it('restore rejects garbage and wrong-key backups without touching data', async () => {
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'survivor' })
+    await agent.post('/api/backup').set('content-type', 'application/octet-stream').send('this is not a database').expect(400)
+    // same schema, content_enc undecryptable under the current key (== backup
+    // from an install with a different ENCRYPTION_KEY) → 409, live data intact
+    const foreignPath = path.join(os.tmpdir(), `foreign-${Date.now()}-${Math.random().toString(36).slice(2)}.db`)
+    const cols = ctx.db.prepare('PRAGMA table_info(cookies)').all().map(c => c.name)
+    const foreign = new Database(foreignPath)
+    foreign.exec(`CREATE TABLE cookies (${cols.map(c => `"${c}" TEXT`).join(',')})`)
+    foreign.prepare(`INSERT INTO cookies (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`)
+      .run(...cols.map(c => (c === 'content_enc' ? randomBytes(72) : c === 'service_key' ? 'netflix' : null)))
+    foreign.close()
+    await agent.post('/api/backup').set('content-type', 'application/octet-stream').send(fs.readFileSync(foreignPath)).expect(409)
+    fs.unlinkSync(foreignPath)
+    expect((await agent.get('/api/cookies')).body.total).toBe(1) // untouched
   })
 })

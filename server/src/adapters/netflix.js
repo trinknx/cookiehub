@@ -1,8 +1,73 @@
+import { parseBillingIso } from '../billingDate.js'
+
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
-// reactContext string values embed JS hex escapes (verified on a live US page:
-// "mikekugler1\x40gmail.com", "December\x202023") — unescape before storing.
-const unhex = s => s.replace(/\\x([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+// reactContext string values embed JS hex escapes — \xNN (verified on a live
+// US page: "mikekugler1\x40gmail.com") AND \uNNNN for chars above U+00FF
+// (verified on a live VN page: "Cao c\u1EA5p") — unescape before storing.
+const unhex = s => s.replace(/\\x([0-9A-Fa-f]{2})|\\u([0-9A-Fa-f]{4})/g, (_, x, u) => String.fromCharCode(parseInt(x || u, 16)))
+// Canonical plan tier from machine-readable fields — immune to UI language.
+export const planTier = extra => {
+  if (!extra) return null
+  if (extra.hasAds) return 'Standard with ads'
+  const q = String(extra.videoQuality || '').toLowerCase()
+  if (q.includes('uhd') || q.includes('4k')) return 'Premium'
+  if (q.includes('1080') || q.includes('full hd')) return 'Standard'
+  if (q.includes('720') || q.includes('sd')) return 'Basic'
+  if (q.includes('hd')) return extra.maxStreams === 1 ? 'Basic' : 'Standard'
+  return null
+}
+
+// Profile names arrive HTML-entity-escaped Netflix-style: Latin-1 chars as
+// named entities (&ccedil;), anything above U+00FF as numeric (&#x1F970;,
+// &#x1EBB;) — verified on live pages ("Crian&ccedil;a", "Tr&#x1EBB; em",
+// "Saris&#x1F970;"). The HTML 4 Latin-1 named table below covers the named
+// half; unknown names stay verbatim.
+const NAMED_ENTITIES = ('nbsp 00A0 iexcl 00A1 cent 00A2 pound 00A3 curren 00A4 yen 00A5 brvbar 00A6 sect 00A7 uml 00A8 copy 00A9 ordf 00AA laquo 00AB not 00AC shy 00AD reg 00AE macr 00AF deg 00B0 plusmn 00B1 sup2 00B2 sup3 00B3 acute 00B4 micro 00B5 para 00B6 middot 00B7 cedil 00B8 sup1 00B9 ordm 00BA raquo 00BB frac14 00BC frac12 00BD frac34 00BE iquest 00BF Agrave 00C0 Aacute 00C1 Acirc 00C2 Atilde 00C3 Auml 00C4 Aring 00C5 AElig 00C6 Ccedil 00C7 Egrave 00C8 Eacute 00C9 Ecirc 00CA Euml 00CB Igrave 00CC Iacute 00CD Icirc 00CE Iuml 00CF ETH 00D0 Ntilde 00D1 Ograve 00D2 Oacute 00D3 Ocirc 00D4 Otilde 00D5 Ouml 00D6 times 00D7 Oslash 00D8 Ugrave 00D9 Uacute 00DA Ucirc 00DB Uuml 00DC Yacute 00DD THORN 00DE szlig 00DF agrave 00E0 aacute 00E1 acirc 00E2 atilde 00E3 auml 00E4 aring 00E5 aelig 00E6 ccedil 00E7 egrave 00E8 eacute 00E9 ecirc 00EA euml 00EB igrave 00EC iacute 00ED icirc 00EE iuml 00EF eth 00F0 ntilde 00F1 ograve 00F2 oacute 00F3 ocirc 00F4 otilde 00F5 ouml 00F6 divide 00F7 oslash 00F8 ugrave 00F9 uacute 00FA ucirc 00FB uuml 00FC yacute 00FD thorn 00FE yuml 00FF quot 0022 amp 0026 apos 0027 lt 003C gt 003E'
+  .split(' ').reduce((a, p, i, arr) => { if (i % 2 === 0) a[p] = String.fromCharCode(parseInt(arr[i + 1], 16)); return a }, {}))
+const decodeEntities = s => s.replace(/&(#[xX]?[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/g, (m, body) => {
+  if (body[0] === '#') {
+    const cp = body[1] === 'x' || body[1] === 'X' ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10)
+    return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m
+  }
+  return NAMED_ENTITIES[body] || m
+})
+
+// Profile list from a logged-in page. /browse (and /profiles/manage, the
+// fallback) ship `netflix.falcorCache = {…};` — a falcor model whose
+// profilesList holds refs into a profiles map; each summary carries
+// profileName, isKids, maturityLevel… (verified on 30 live cookies, 2026-08-29:
+// 29/30 parsed from /browse alone; trailing numeric slots are placeholder
+// atoms, so the walk stops at the first non-ref).
+export function parseNetflixProfiles(html) {
+  const marker = html.indexOf('netflix.falcorCache')
+  const start = marker === -1 ? -1 : html.indexOf('{', marker)
+  if (start === -1) return null
+  // brace-walk the JS-assigned JSON literal (string/escape aware) — it is NOT
+  // wrapped in quotes, so a plain indexOf/regex cut cannot find its end
+  let depth = 0, inStr = false, esc = false, end = -1
+  for (let k = start; k < html.length; k++) {
+    const c = html[k]
+    if (esc) { esc = false; continue }
+    if (c === '\\') { esc = true; continue }
+    if (c === '"') { inStr = !inStr; continue }
+    if (inStr) continue
+    if (c === '{') depth++
+    else if (c === '}' && --depth === 0) { end = k + 1; break }
+  }
+  if (end === -1) return null
+  let fc
+  try { fc = JSON.parse(unhex(html.slice(start, end))) } catch { return null }
+  const list = []
+  for (let n = 0; ; n++) {
+    const e = fc.profilesList?.[String(n)]
+    if (!e || e.$type !== 'ref') break
+    const s = fc.profiles?.[e.value?.[1]]?.summary?.value
+    if (s && s.profileName !== undefined) list.push({ name: decodeEntities(String(s.profileName)), isKids: !!s.isKids })
+  }
+  if (!list.length) return null
+  return { count: list.length, kidsCount: list.filter(p => p.isKids).length, list }
+}
 
 // Netflix iOS app (Argo) shakti call that mints a short-lived (~1h) nftoken;
 // https://netflix.com/?nftoken=… logs the session straight in. Values captured
@@ -101,6 +166,11 @@ export default {
     }
     if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`) // transient (outage) — engine records 'error' without flipping status
     if (res.status !== 200) return { status: 'die', reason: `HTTP ${res.status}` }
+    // The browse page itself carries the profile list (falcorCache embeds
+    // profilesList + profiles). Capture the body before /account — 29/30 live
+    // sessions parse from here with zero extra requests.
+    let browseHtml = ''
+    try { browseHtml = await res.text() } catch (e) { log(`browse body read failed: ${e.message}`) }
     const info = {}
     try {
       const acc = await fetch('https://www.netflix.com/account', { headers: { 'user-agent': UA } })
@@ -114,22 +184,54 @@ export default {
       //    unescaped via unhex() (emailAddress, currentCountry, memberSince).
       // The old data-uia="plan-name" / "planName" / next-bill-date / "email" regexes
       // never matched the real page and are gone.
-      const plan = html.match(/localizedPlanName":{"fieldType":"String","value":"([^"]+)"/)
-      if (plan) info.plan = unhex(plan[1])
+      // Plan: canonical English tier derived from machine-readable fields
+      // (quality/streams/ads) — localizedPlanName renders as "Cao cấp",
+      // "Estándar", "المميزة"… which breaks pill colors and plan sorting.
+      // The localized name survives in planLocalized for the tooltip.
       const streams = html.match(/maxStreams":{"fieldType":"Numeric","value":(\d+)/)
       const quality = html.match(/videoQuality":{"fieldType":"String","value":"([^"]+)"/)
-      if (streams || quality) {
+      const ads = html.match(/hasAds":\{"fieldType":"Boolean",value:(true|false)/)
+      const plan = html.match(/localizedPlanName":{"fieldType":"String","value":"([^"]+)"/)
+      if (streams || quality || ads) {
         info.extra = {}
         if (streams) info.extra.maxStreams = Number(streams[1])
         if (quality) info.extra.videoQuality = unhex(quality[1])
+        if (ads) info.extra.hasAds = ads[1] === 'true'
       }
+      const tier = planTier(info.extra)
+      if (plan) {
+        const localized = unhex(plan[1])
+        info.plan = tier || localized
+        if (tier && localized.toLowerCase() !== tier.toLowerCase()) info.planLocalized = localized
+      } else if (tier) info.plan = tier
       const country = html.match(/"currentCountry":"([A-Z]{2})"/)
       const email = html.match(/"emailAddress":"([^"]+)"/)
       if (country) info.country = country[1]
       if (email) info.email = unhex(email[1])
       const since = html.match(/"memberSince":"([^"]+)"/)
       if (since) info.memberSince = unhex(since[1])
+      // Same form-model blob carries the renewal date ("Next payment: …" on
+      // the page). ISO twin nextBillingIso is for SQL sorting — display text
+      // sorts wrong and is often localized, so parseBillingIso handles the
+      // languages Netflix serves (incl. Arabic-Indic digits, VI numeric).
+      const billing = html.match(/nextBillingDate":\{"fieldType":"String","value":"([^"]+)"/)
+      if (billing) {
+        info.nextBilling = unhex(billing[1])
+        info.nextBillingIso = parseBillingIso(info.nextBilling) || undefined
+      }
     } catch (e) { log(`account info fetch failed: ${e.message}`) }
+    // Profiles: prefer the browse body already in hand; the rare session that
+    // lands without a falcorCache (profile-gate edge) gets one best-effort
+    // fetch of /profiles/manage, which embeds the identical model. Runs after
+    // the /account block so its failures can't starve plan/email parsing.
+    let profiles = parseNetflixProfiles(browseHtml)
+    if (!profiles) {
+      try {
+        const pm = await fetch('https://www.netflix.com/profiles/manage', { headers: HEADERS })
+        if (pm.status === 200) profiles = parseNetflixProfiles(await pm.text())
+      } catch (e) { log(`profiles fetch failed: ${e.message}`) }
+    }
+    if (profiles) info.profiles = profiles
     return { status: 'live', reason: 'logged in', accountInfo: Object.keys(info).length ? info : undefined }
   },
 
@@ -146,7 +248,15 @@ export default {
     const j = await res.json()
     const token = j?.value?.account?.token?.default?.token
     if (!token) { log('nftoken response had no token — cookie may be dead'); throw new Error('no nftoken in response (cookie may be dead)') }
-    return { link: 'https://netflix.com/?nftoken=' + encodeURIComponent(token), expires: j.value.account.token.default.expires }
+    // One mint, two wrappers: the bare root URL logs the browser straight in;
+    // /val is Netflix's app-handoff interstitial — open it in Safari/Chrome on
+    // the phone and tap "Open in Netflix" to log the app in (same token).
+    const q = encodeURIComponent(token)
+    return {
+      link: `https://netflix.com/?nftoken=${q}`,
+      linkApp: `https://netflix.com/val?nftoken=${q}`,
+      expires: j.value.account.token.default.expires
+    }
   },
   // Link a TV by entering the code it displays (netflix.com/tv8 flow).
   // Verified against the live tv8 page 2026-08-25: the code entry form is a

@@ -9,6 +9,28 @@ export default function Settings() {
   const [failed, setFailed] = useState(false)
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '' })
   const flash = m => { setMsg(m); setTimeout(() => setMsg(''), 2500) }
+  const [busy, setBusy] = useState('')
+  const doRestore = async e => {
+    const f = e.target.files?.[0]
+    e.target.value = '' // re-selecting the same file must re-fire change
+    if (!f) return
+    if (!confirm(`Restore từ ${f.name}?\nDữ liệu hiện tại (cookies, logs, settings) sẽ bị GHI ĐÈ.`)) return
+    setBusy('uploading & restoring…')
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream', 'x-requested-with': 'XMLHttpRequest' },
+        body: f
+      })
+      const j = await res.json().catch(() => ({}))
+      if (res.status === 401 && j?.error?.code === 'unauthenticated') { location.href = '/login'; return }
+      if (!res.ok) throw new Error(j?.error?.message || `HTTP ${res.status}`)
+      const parts = Object.entries(j.restored || {}).map(([t, n]) => `${t}: ${n}`)
+      flash(`restored — ${parts.join(', ')}`)
+      reload()
+    } catch (err) { flash(err.message) }
+    finally { setBusy('') }
+  }
 
   const reload = () => Promise.all([api('/settings'), api('/services')])
     .then(([sv, svcs]) => { setS(sv); setServices(svcs) })
@@ -95,6 +117,22 @@ export default function Settings() {
           className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2" required />
         <button className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold">change</button>
       </form>
+
+      <div className="bg-slate-800 rounded-xl p-6 space-y-4">
+        <h2 className="font-bold">Backup & restore</h2>
+        <p className="text-xs text-slate-400">
+          Snapshot đầy đủ (cookies + logs + settings) dạng SQLite, mã hóa bằng ENCRYPTION_KEY hiện tại —
+          restore chỉ chấp nhận backup cùng key. Nên restore khi không đang chạy check.
+        </p>
+        <div className="flex gap-2 items-center flex-wrap">
+          <a href="/api/backup" className="rounded bg-sky-600 hover:bg-sky-500 px-4 py-2 font-semibold text-sm">Download backup</a>
+          <label className={`rounded bg-amber-600 hover:bg-amber-500 px-4 py-2 font-semibold text-sm ${busy ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+            Restore…
+            <input type="file" accept=".db" className="hidden" disabled={!!busy} onChange={doRestore} />
+          </label>
+          {busy && <span className="text-xs text-slate-400 animate-pulse">{busy}</span>}
+        </div>
+      </div>
     </div>
   )
 }

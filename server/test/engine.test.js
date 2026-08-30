@@ -6,9 +6,11 @@ import { toHeaderString } from '../src/cookieFormat.js'
 
 // capture the (url, init) undici fetch was called with — engine tests never do real HTTP
 const fetchCalls = vi.hoisted(() => [])
+const failQueue = vi.hoisted(() => []) // queued errors thrown before recording a successful call
 vi.mock('undici', () => ({
   fetch: async (url, init) => {
     fetchCalls.push({ url, init })
+    if (failQueue.length) throw failQueue.shift()
     return { status: 200, headers: { get: () => null }, text: async () => '' }
   },
   ProxyAgent: class {},
@@ -62,6 +64,42 @@ describe('engine', () => {
     expect(def.init.headers.get('user-agent')).toBeTruthy()
     expect(explicit.init.headers.get('cookie')).toBe('custom=1')
     expect(inst.init.headers.get('cookie')).toBe('explicit=1')
+  })
+  it('boundFetch retries a transient GET failure once (proxy rotation blip) and succeeds', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    failQueue.push(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+    fetchCalls.length = 0
+    const probeAdapter = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: async ({ fetch }) => ({ status: 'live', reason: 'status ' + (await fetch('https://x.test/flaky')).status })
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', probeAdapter]]) })
+    expect(await engine.runCheck(id)).toBe('live')
+    expect(fetchCalls.filter(c => c.url === 'https://x.test/flaky')).toHaveLength(2) // first attempt threw, retry landed
+  })
+  it('boundFetch does NOT retry POSTs or non-transient errors', async () => {
+    const db = openDb()
+    const postAdapter = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: ({ fetch }) => fetch('https://x.test/submit', { method: 'POST' })
+    }
+    failQueue.push(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+    fetchCalls.length = 0
+    const engine = createEngine({ db, adapters: new Map([['fake', postAdapter]]) })
+    const [id] = seed(db, 'fake')
+    expect(await engine.runCheck(id)).toBe('error') // thrown through — side-effectful POST must not replay
+    expect(fetchCalls.filter(c => c.url === 'https://x.test/submit')).toHaveLength(1)
+    failQueue.push(new Error('boom')) // non-transient GET error
+    fetchCalls.length = 0
+    const getAdapter = {
+      key: 'fake', name: 'Fake', defaultDomain: '.fake.com',
+      check: ({ fetch }) => fetch('https://x.test/get')
+    }
+    const engine2 = createEngine({ db, adapters: new Map([['fake', getAdapter]]) })
+    const [id2] = seed(db, 'fake')
+    expect(await engine2.runCheck(id2)).toBe('error')
+    expect(fetchCalls.filter(c => c.url === 'https://x.test/get')).toHaveLength(1)
   })
   it('die keeps old account_info; error keeps status untouched', async () => {
     const db = openDb()
