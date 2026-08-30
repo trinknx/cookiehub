@@ -434,6 +434,20 @@ describe('backup + restore api', () => {
     expect(after.body.total).toBe(1)
     expect(after.body.items[0].label).toBe('keep-me')
   })
+  it('restore inserts parents before FK children — snapshot logs reference ids absent from live db', async () => {
+    const add = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'snap' }).expect(200)
+    ctx.db.prepare('INSERT INTO check_logs(cookie_id,status,reason,created_at) VALUES(?,?,?,?)')
+      .run(add.body.created[0].id, 'live', 'test log', Date.now())
+    const dl = await agent.get('/api/backup').buffer().parse(binary).expect(200)
+    // live db now diverges: wipe (cascades logs) and let a NEW cookie take the
+    // next autoincrement id — the snapshot's log id no longer exists live
+    ctx.db.prepare('DELETE FROM cookies').run()
+    await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'other' }).expect(200)
+    const r = await agent.post('/api/backup').set('content-type', 'application/octet-stream').send(dl.body).expect(200)
+    expect(r.body.restored.cookies).toBe(1)
+    expect(r.body.restored.check_logs).toBe(1)
+    expect((await agent.get('/api/cookies')).body.items[0].label).toBe('snap')
+  })
   it('restore rejects garbage and wrong-key backups without touching data', async () => {
     await agent.post('/api/cookies').send({ service: 'netflix', content: HDR, label: 'survivor' })
     await agent.post('/api/backup').set('content-type', 'application/octet-stream').send('this is not a database').expect(400)

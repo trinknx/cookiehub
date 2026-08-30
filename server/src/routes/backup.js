@@ -8,9 +8,11 @@ import { decryptJSON } from '../crypto.js'
 import { aw } from '../asyncHandler.js'
 
 const err = (res, code, message, status) => res.status(status).json({ error: { code, message } })
-// child (check_logs) before parent (cookies) so plain FK constraints hold even
-// without cascades; sessions is deliberately NOT restored — the restoring
-// browser keeps its own session regardless of the backup's origin
+// restore order: DELETEs run child-first (check_logs before cookies) so plain
+// FK constraints hold even without cascades; INSERTs then run parent-first —
+// a snapshot's check_logs reference snapshot cookie ids that only exist once
+// the cookies rows are back. sessions is deliberately NOT restored — the
+// restoring browser keeps its own session regardless of the backup's origin
 const TABLES = ['check_logs', 'cookies', 'settings', 'service_settings']
 
 export function backupRoutes({ db }) {
@@ -65,9 +67,9 @@ export function backupRoutes({ db }) {
       try {
         db.transaction(() => {
           restored = {}
-          for (const t of TABLES) {
+          for (const t of TABLES) if (srcTables.has(t)) db.prepare(`DELETE FROM main."${t}"`).run()
+          for (const t of [...TABLES].reverse()) {
             if (!srcTables.has(t)) continue
-            db.prepare(`DELETE FROM main."${t}"`).run()
             restored[t] = db.prepare(`INSERT INTO main."${t}" SELECT * FROM src."${t}"`).run().changes
           }
         })()
@@ -76,6 +78,7 @@ export function backupRoutes({ db }) {
       }
       res.json({ ok: true, restored })
     } catch (e) {
+      console.error('[cookiehub] restore failed:', e.message)
       err(res, 'restore_failed', e.message, 500)
     } finally {
       fs.unlink(tmp, () => {})
