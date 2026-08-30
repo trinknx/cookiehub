@@ -1,0 +1,19 @@
+services:
+  cookiehub:
+    build: .
+    image: cookiehub:latest
+    container_name: cookiehub
+    ports:
+      - "3000:3000"
+    # reuse the repo's server/.env (ENCRYPTION_KEY). Required on first run —
+    # generate one with:  openssl rand -base64 32
+    # A key generated inside a container is ephemeral and would make every
+    # stored cookie unreadable after `docker compose down`.
+    env_file:
+      - server/.env
+    environment:
+      HOST: 0.0.0.0 # loopback default is unreachable outside the container
+      # NODE_ENV: production   # only when behind a trusted reverse proxy (enables trust proxy)
+    volumes:
+      - ./server/data:/app/server/data
+    restart: unless-stopped

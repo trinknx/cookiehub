@@ -3,3 +3,6 @@ node_modules/
 server/data/
 .env
 client/dist/
+# license vault + check reports stay local (secrets)
+tools/expressvpn/accounts.txt
+tools/expressvpn/report.*

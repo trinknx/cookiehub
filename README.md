@@ -29,6 +29,25 @@ The server binds loopback only (`127.0.0.1`) so TLS terminates at the reverse pr
 
 First run generates `.env` with `ENCRYPTION_KEY` (keep it safe — losing it loses all stored cookies) and asks you to create the admin password in the UI.
 
+### Docker (Linux)
+
+```bash
+# server/.env must carry ENCRYPTION_KEY before first start (generate: openssl rand -base64 32)
+docker compose up -d --build   # app on :3000, SQLite data persisted in ./server/data
+```
+
+The image bundles python3 + `curl_cffi` (ChatGPT/Claude checks work out of the box). `ENCRYPTION_KEY`/`PORT` may also be passed as plain env vars — env vars win over the `.env` file. A key generated *inside* a container is ephemeral and would make every stored cookie unreadable after recreation, so always provide one. Do not set `NODE_ENV=production` unless the container runs behind a trusted reverse proxy (it enables `trust proxy`).
+
+## ExpressVPN license checker (local CLI)
+
+The ExpressVPN vault is managed outside the app. `tools/expressvpn/` is a self-contained CLI that drives the local ExpressVPN desktop app (`expressvpnctl`) — live checks need the app installed at its default path, i.e. Windows:
+
+```bash
+node tools/expressvpn/check-licenses.mjs [--file accounts.txt] [--delay 1500]
+```
+
+Reads `tools/expressvpn/accounts.txt`, writes `report.csv`/`report.json` next to it. The former in-app vault was exported there.
+
 > **Note (fresh clones):** npm may block install scripts for native modules (`better-sqlite3`, `esbuild`). If `npm install` output mentions blocked scripts, run `npm approve-scripts` (or configure allowed scripts per your npm version) and re-run `npm install` / `npm rebuild better-sqlite3 esbuild`.
 
 ## Deploy (Linux VPS)

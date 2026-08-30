@@ -10,6 +10,9 @@ import { createScheduler } from './scheduler.js'
 import { buildApp } from './app.js'
 
 const env = readEnv('.env')
+// containers pass config through the environment; env vars win over the .env file
+if (process.env.ENCRYPTION_KEY) env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY
+if (process.env.PORT) env.PORT = process.env.PORT
 if (!env.ENCRYPTION_KEY) {
   const key = generateKeyB64()
   fs.appendFileSync('.env', `${fs.existsSync('.env') ? '\n' : ''}ENCRYPTION_KEY=${key}\n`)

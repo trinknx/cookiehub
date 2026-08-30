@@ -1,9 +1,11 @@
+import path from 'node:path'
 import express from 'express'
 import cookieParser from 'cookie-parser'
 import { authRoutes, requireAuth, csrfGuard } from './routes/auth.js'
 import { cookieRoutes } from './routes/cookies.js'
 import { serviceRoutes } from './routes/services.js'
 import { settingsRoutes } from './routes/settings.js'
+import { backupRoutes } from './routes/backup.js'
 
 export function buildApp({ db, adapters, engine, scheduler }) {
   const app = express()
@@ -18,7 +20,17 @@ export function buildApp({ db, adapters, engine, scheduler }) {
   app.use('/api/cookies', cookieRoutes({ db, engine, adapters }))
   app.use('/api/services', serviceRoutes({ db, adapters }))
   app.use('/api/settings', settingsRoutes({ db, scheduler }))
+  app.use('/api/backup', backupRoutes({ db }))
   app.use('/api', (req, res) => res.status(404).json({ error: { code: 'not_found', message: 'unknown api route' } }))
+  // Single-port mode: serve the built client alongside the API (vite dev with
+  // its proxy is for development only). Resolved from this file so the server
+  // cwd doesn't matter; a missing dist just falls through to the SPA 404s.
+  const dist = path.resolve(import.meta.dirname, '../../client/dist')
+  app.use(express.static(dist))
+  app.use((req, res, next) => { // SPA fallback — client-side routes like /login
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(dist, 'index.html'))
+  })
   app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
     res.status(err.status || 500).json({ error: { code: err.code || 'internal', message: err.message || 'internal error' } })
   })

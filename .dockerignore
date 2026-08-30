@@ -1,0 +1,14 @@
+# never bake secrets or local state into the image
+.git
+.worktrees
+.superpowers
+**/.env
+server/.env
+server/data
+node_modules
+**/node_modules
+client/dist
+tools
+deploy
+docs
+*.md

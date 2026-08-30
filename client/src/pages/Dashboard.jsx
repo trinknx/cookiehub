@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
-  ArrowLeft, Bot, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, Film, FolderOpen, Link2, Music2,
+  ArrowDownWideNarrow, ArrowLeft, ArrowUpWideNarrow, Bot, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, FileJson, Film, FolderOpen, Link2, Music2,
   PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Sparkles, Trash2, Tv, Upload, Users
 } from 'lucide-react'
 
@@ -38,14 +38,40 @@ const qualityTag = raw => {
   if (q.includes('sd')) return 'SD'
   return null
 }
+// Renewal pill: days remaining (local midnight basis) — red once past,
+// amber inside a week, slate otherwise. Full date stays in the tooltip.
+const billingDays = iso => Math.round((Date.parse(iso + 'T00:00:00') - Date.now()) / 864e5)
+const billingPill = iso => {
+  const days = billingDays(iso)
+  const label = days < 0 ? `-${-days}d` : days === 0 ? 'today' : `${days}d`
+  const cls = days < 0 ? 'bg-red-600/30 text-red-300' : days < 7 ? 'bg-amber-500/30 text-amber-300' : 'bg-slate-600/40 text-slate-300'
+  return { label, cls }
+}
 
 function AccountTags({ info, dup }) {
   const tags = []
   if (dup) tags.push(<span key="dup" className={`${PILL} bg-amber-500/30 text-amber-300`}>dup</span>)
-  if (info?.plan) tags.push(<span key="plan" className={`${PILL} ${planPillClass(info.plan)}`}>{info.plan}</span>)
+  if (info?.plan) tags.push(<span key="plan" title={info.planLocalized} className={`${PILL} ${planPillClass(info.plan)}`}>{info.plan}</span>)
   if (info?.country) tags.push(<span key="country" className={`${PILL} bg-emerald-600/30 text-emerald-300`}>{info.country}</span>)
   const quality = info?.extra?.videoQuality ? qualityTag(info.extra.videoQuality) : null
   if (quality) tags.push(<span key="quality" className={`${PILL} bg-violet-600/30 text-violet-300`}>{quality}</span>)
+  if (info?.extra?.maxStreams) tags.push(
+    <span key="screens" title="Số screen xem đồng thời (maxStreams)"
+      className={`${PILL} bg-cyan-600/30 text-cyan-300`}>🖥 {info.extra.maxStreams}</span>
+  )
+  if (info?.profiles) {
+    const names = (info.profiles.list || []).map(p => `${p.isKids ? '👶 ' : ''}${p.name}`).join('\n')
+    tags.push(
+      <span key="profiles" title={names}
+        className={`${PILL} ${info.profiles.kidsCount ? 'bg-amber-500/30 text-amber-300' : 'bg-slate-600/40 text-slate-300'}`}>
+        👥 {info.profiles.count}{info.profiles.kidsCount ? ` · ${info.profiles.kidsCount}👶` : ''}
+      </span>
+    )
+  }
+  if (info?.nextBillingIso) {
+    const { label, cls } = billingPill(info.nextBillingIso)
+    tags.push(<span key="bill" title={`${info.nextBilling} (${label})`} className={`${PILL} ${cls}`}>↻ {label}</span>)
+  }
   if (!tags.length) return '—'
   return <span className="inline-flex flex-wrap gap-1">{tags}</span>
 }
@@ -55,14 +81,18 @@ export default function Dashboard() {
   const [items, setItems] = useState([])
   const [services, setServices] = useState([])
   const [fService, setFService] = useState('')
+
   const [fStatus, setFStatus] = useState('')
   const [q, setQ] = useState('')
+  const [fSort, setFSort] = useState('')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [job, setJob] = useState(null)
   const [addOpen, setAddOpen] = useState(false)
   const [detail, setDetail] = useState(null)
   const [familyFor, setFamilyFor] = useState(null)
+  const [linkTvFor, setLinkTvFor] = useState(null)
+  const [nftFor, setNftFor] = useState(null)
   const [toast, setToast] = useState('')
   const [servicesErr, setServicesErr] = useState('')
   const pollRef = useRef(null)
@@ -74,13 +104,14 @@ export default function Dashboard() {
     const p = new URLSearchParams()
     if (fService) p.set('service', fService)
     if (fStatus) p.set('status', fStatus)
+    if (fSort) p.set('sort', fSort)
     if (q) p.set('q', q)
     p.set('page', String(page))
     const list = await api(`/cookies?${p}`)
     if (id !== reqId.current) return // stale response — a newer request superseded this one
     setItems(list.items)
     setTotal(list.total)
-  }, [fService, fStatus, q, page])
+  }, [fService, fStatus, fSort, q, page])
 
   const loadServices = useCallback(async () => {
     try { setServices(await api('/services')); setServicesErr('') }
@@ -88,7 +119,7 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => { load().catch(e => showToast(e.message)) }, [load])
-  useEffect(() => { setPage(1) }, [fService, fStatus, q]) // new filters → back to first page
+  useEffect(() => { setPage(1) }, [fService, fStatus, fSort, q]) // new filters → back to first page
   useEffect(() => { loadServices() }, [loadServices])
 
   useEffect(() => {
@@ -146,14 +177,6 @@ export default function Dashboard() {
       const r = await api('/cookies/remove-duplicates', { method: 'POST', body: { service: key } })
       showToast(`removed ${r.removed} duplicates (${r.groups} groups)`)
       await Promise.all([load(), loadServices()])
-    } catch (e) { showToast(e.message) }
-  }
-
-  const copyNft = async id => {
-    try {
-      const r = await api(`/cookies/${id}/nftoken`, { method: 'POST' })
-      await navigator.clipboard.writeText(r.link)
-      showToast('nftoken link copied (valid ~1h)')
     } catch (e) { showToast(e.message) }
   }
   const copy = async (id, format) => {
@@ -243,6 +266,21 @@ export default function Dashboard() {
               <option value="">all status</option>
               <option value="live">live</option><option value="die">die</option><option value="unknown">unknown</option>
             </select>
+            <select value={fSort.replace(/^-/, '')} onChange={e => { setPage(1); setFSort(e.target.value) }} title="Sort by account tags"
+              className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
+              <option value="">no sort</option>
+              <option value="plan">plan</option>
+              <option value="country">country</option>
+              <option value="quality">quality</option>
+              <option value="billing">billing date</option>
+            </select>
+            {fSort && (
+              <button onClick={() => setFSort(s => (s.startsWith('-') ? s.slice(1) : `-${s}`))}
+                title={fSort.startsWith('-') ? 'Descending' : 'Ascending'}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/60">
+                {fSort.startsWith('-') ? <ArrowDownWideNarrow className="w-4 h-4" /> : <ArrowUpWideNarrow className="w-4 h-4" />}
+              </button>
+            )}
             <button onClick={() => checkAll({ service: view.key, status: 'unknown' })} disabled={job?.running}
               className="flex items-center gap-1.5 rounded-lg bg-sky-600/20 text-sky-300 hover:bg-sky-600/30 px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
               <RotateCcw className="w-4 h-4" /> Recheck unknown
@@ -282,12 +320,14 @@ export default function Dashboard() {
                             className="rounded-lg p-1.5 text-slate-300 bg-slate-700/50 hover:bg-slate-700"><Copy className="w-4 h-4" /></button>
                           <button onClick={() => copy(c.id, 'netscape')} title="Copy as netscape"
                             className="rounded-lg p-1.5 text-slate-300 bg-slate-700/50 hover:bg-slate-700"><ClipboardCopy className="w-4 h-4" /></button>
+                          <button onClick={() => copy(c.id, 'json')} title="Copy as Cookie-Editor JSON (import vào Chrome)"
+                            className="rounded-lg p-1.5 text-amber-400 bg-amber-600/10 hover:bg-amber-600/30"><FileJson className="w-4 h-4" /></button>
                           {c.service_key === 'spotify' && (
                             <button onClick={() => setFamilyFor(c)} title="Family plan info (address + invite link)"
                               className="rounded-lg p-1.5 text-emerald-500 bg-emerald-600/20 hover:bg-emerald-600/30"><Users className="w-4 h-4" /></button>
                           )}
                           {c.service_key === 'netflix' && (
-                            <button onClick={() => copyNft(c.id)} title="Copy nftoken login link"
+                            <button onClick={() => setNftFor(c)} title="Copy nftoken login link (web / app)"
                             className="rounded-lg p-1.5 text-violet-600 bg-violet-600/20 hover:bg-violet-600/30"><Link2 className="w-4 h-4" /></button>
                           )}
                           {(c.service_key === 'netflix' || c.service_key === 'hbomax') && (
@@ -319,6 +359,8 @@ export default function Dashboard() {
       {addOpen && <AddModal services={services} onClose={() => setAddOpen(false)} onDone={() => { load().catch(() => {}); loadServices() }} showToast={showToast} />}
       {detail && <DetailDrawer cookie={detail} onClose={() => setDetail(null)} onSave={saveEdit} showToast={showToast} />}
       {familyFor && <FamilyModal cookie={familyFor} onClose={() => setFamilyFor(null)} showToast={showToast} />}
+      {linkTvFor && <LinkTvModal cookie={linkTvFor} onClose={() => setLinkTvFor(null)} showToast={showToast} />}
+      {nftFor && <NftModal cookie={nftFor} onClose={() => setNftFor(null)} showToast={showToast} />}
       {toast && <div className="fixed bottom-6 right-6 rounded bg-slate-700 px-4 py-2 shadow-lg">{toast}</div>}
     </div>
   )
@@ -345,6 +387,11 @@ function AddModal({ services, onClose, onDone, showToast }) {
   // Files/Folder picker: read every selected file, join, and auto-import —
   // no second click. Server-side junk filtering drops seller headers, so a
   // folder of raw .txt cookie files imports without failure noise.
+  // The server caps one import at 5000 chunks / 12MB body, so a bigger folder
+  // is split into batches (2000 files or 8MB each, whichever comes first) and
+  // the per-batch results are merged into one summary.
+  const BATCH_MAX_FILES = 2000
+  const BATCH_MAX_BYTES = 8 * 1024 * 1024
   const readAndImport = async e => {
     const files = [...(e.target.files || [])]
     e.target.value = '' // re-selecting the same folder must re-fire change
@@ -352,8 +399,25 @@ function AddModal({ services, onClose, onDone, showToast }) {
     try {
       setBusy(`reading ${files.length} file${files.length === 1 ? '' : 's'}…`)
       const texts = await Promise.all(files.map(f => f.text()))
-      setBusy(`importing ${files.length} file${files.length === 1 ? '' : 's'}…`)
-      await submit(null, texts.join('\n\n'))
+      const batches = []
+      let cur = [], curBytes = 0
+      for (const t of texts) {
+        const bytes = new Blob([t]).size
+        if (cur.length && (cur.length >= BATCH_MAX_FILES || curBytes + bytes > BATCH_MAX_BYTES)) {
+          batches.push(cur); cur = []; curBytes = 0
+        }
+        cur.push(t); curBytes += bytes
+      }
+      if (cur.length) batches.push(cur)
+      const merged = { created: [], failed: [], skipped: 0 }
+      for (let i = 0; i < batches.length; i++) {
+        setBusy(`importing batch ${i + 1}/${batches.length} (${files.length} files)…`)
+        const r = await api('/cookies', { method: 'POST', body: { service, content: batches[i].join('\n\n'), label } })
+        merged.created.push(...r.created); merged.failed.push(...r.failed); merged.skipped += r.skipped || 0
+      }
+      if (merged.created.length) createdAny.current = true
+      setResult(merged)
+      showToast(`imported ${merged.created.length}, failed ${merged.failed.length}${merged.skipped ? `, skipped ${merged.skipped}` : ''}`)
     } catch (err) { showToast(err.message) }
     finally { setBusy('') }
   }
@@ -441,6 +505,56 @@ function LinkTvModal({ cookie, onClose, showToast }) {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+// One mint, two link forms: web (bare root URL — browser logs straight in) and
+// app (/val interstitial — open on a phone, tap "Open in Netflix", the app
+// logs in). Same token, ~1h validity.
+function NftModal({ cookie, onClose, showToast }) {
+  const [data, setData] = useState(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    api(`/cookies/${cookie.id}/nftoken`, { method: 'POST' }).then(setData).catch(e => setErr(e.message))
+  }, [cookie.id])
+  const copyText = async (text, what) => {
+    try { await navigator.clipboard.writeText(text); showToast(`${what} copied`) }
+    catch { showToast('copy failed') }
+  }
+  const Row = ({ title, hint, url, what, iconClass, Icon }) => (
+    <div>
+      <h3 className="text-xs font-semibold uppercase text-slate-400">{title}</h3>
+      <div className="flex items-start gap-2 mt-1">
+        <p className="text-xs font-mono text-slate-300 flex-1 break-all">{url}</p>
+        <button onClick={() => copyText(url, what)} title={`Copy ${what}`}
+          className={`rounded-lg p-1.5 shrink-0 ${iconClass}`}><Icon className="w-4 h-4" /></button>
+      </div>
+      <p className="text-[11px] text-slate-500 mt-1">{hint}</p>
+    </div>
+  )
+  return (
+    <div className="fixed inset-0 bg-black/60 grid place-items-center p-4" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="bg-slate-800 rounded-xl p-6 w-full max-w-md space-y-4 max-h-[85vh] overflow-auto">
+        <h2 className="text-lg font-bold">nftoken · {cookie.label || `#${cookie.id}`}</h2>
+        {err && <p className="text-sm text-red-400">{err}</p>}
+        {!data && !err && <p className="text-sm text-slate-400">minting…</p>}
+        {data && (
+          <>
+            <p className="text-[11px] text-slate-500">
+              Same token, two targets. Valid until {new Date(data.expires).toLocaleTimeString()} (~1h).
+            </p>
+            <Row title="Web login" what="web link" url={data.link}
+              hint="Mở bằng browser bất kỳ — session login ngay." iconClass="text-slate-300 bg-slate-700/50 hover:bg-slate-700" Icon={Copy} />
+            {/* linkApp missing = pre-restart server: derive it — same token, /val path */}
+            <Row title="App (phone)" what="app link" url={data.linkApp || data.link?.replace('/?nftoken=', '/val?nftoken=')}
+              hint="Mở bằng Safari/Chrome trên phone → bấm “Open in Netflix” → app tự login." iconClass="text-violet-500 bg-violet-600/20 hover:bg-violet-600/30" Icon={Link2} />
+          </>
+        )}
+        <div className="flex justify-end">
+          <button onClick={onClose} className="rounded bg-slate-700 px-4 py-2">close</button>
+        </div>
+      </div>
     </div>
   )
 }
