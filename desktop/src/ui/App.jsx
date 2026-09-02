@@ -17,9 +17,11 @@ const err = e => e?.message || String(e)
 
 export default function App() {
   const [items, setItems] = useState([])
-  const [ctlOk, setCtlOk] = useState(true)
+  const [ctlOk, setCtlOk] = useState(null)
   const [job, setJob] = useState(null)
-  const [conn, setConn] = useState({ state: 'idle' })
+  const [conn, setConn] = useState(null)
+  const [pending, setPending] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [filter, setFilter] = useState('all')
   const [toast, setToast] = useState('')
@@ -31,9 +33,11 @@ export default function App() {
 
   useEffect(() => {
     load().catch(() => {})
-    window.xvpn.ctlAvailable().then(setCtlOk).catch(() => {})
-    window.xvpn.checkStatus().then(setJob).catch(() => {})
-    window.xvpn.connectStatus().then(setConn).catch(() => {})
+    Promise.all([
+      window.xvpn.ctlAvailable().then(setCtlOk, () => setCtlOk(false)),
+      window.xvpn.checkStatus().then(setJob, () => {}),
+      window.xvpn.connectStatus().then(setConn, () => setConn({ state: 'idle' })),
+    ]).then(() => setLoaded(true))
     const offP = window.xvpn.onCheckProgress(s => { setJob(s); if (!s.running && s.total) load().catch(() => {}) })
     const offC = window.xvpn.onConnectState(setConn)
     return () => { offP(); offC() }
@@ -42,17 +46,21 @@ export default function App() {
   const counts = useMemo(() => items.reduce((m, a) => ((m[a.state] = (m[a.state] || 0) + 1), m), {}), [items])
 
   const checkAll = async () => {
+    setPending(true)
     try {
       const r = await window.xvpn.checkStart(filter)
       setJob({ running: true, total: r.total, done: 0, failed: 0, current: null })
     } catch (e) { flash(err(e)) }
+    finally { setPending(false) }
   }
   const cancel = async () => { await window.xvpn.checkCancel().catch(() => {}) }
   const remove = async license => {
     try { await window.xvpn.accountsDelete(license); load().catch(() => {}) } catch (e) { flash(err(e)) }
   }
   const connect = async license => {
+    setPending(true)
     try { await window.xvpn.connectConnect(license) } catch (e) { flash(err(e)) }
+    finally { setPending(false) }
   }
   const doExport = async () => {
     try {
@@ -64,15 +72,17 @@ export default function App() {
   const copy = (v, what) => navigator.clipboard.writeText(v).then(() => flash(`${what} copied`), () => {})
 
   const busy = job?.running
+  const locked = busy || pending || conn?.state !== 'idle'
+  const guard = !loaded || !ctlOk || locked
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100">
-      {!ctlOk && (
+      {ctlOk === false && (
         <div className="bg-amber-900/40 border-b border-amber-800 text-amber-200 px-4 py-2 text-sm flex items-center gap-2">
           <ShieldOff className="w-4 h-4" /> expressvpnctl not found — import/export/list work, check/connect disabled.
         </div>
       )}
-      <ConnectBanner conn={conn} onDisconnect={async () => { try { await window.xvpn.connectDisconnect() } catch (e) { flash(err(e)) } }} disabled={!ctlOk} />
+      <ConnectBanner conn={conn || { state: 'idle' }} onDisconnect={async () => { try { await window.xvpn.connectDisconnect() } catch (e) { flash(err(e)) } }} disabled={!ctlOk} />
 
       <header className="flex items-center gap-2 px-4 py-3 border-b border-slate-800 flex-wrap">
         <h1 className="font-bold text-lg mr-2">XVPN Manager</h1>
@@ -86,8 +96,8 @@ export default function App() {
         <button onClick={doExport} className="flex items-center gap-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 px-3 py-2 font-semibold text-sm">
           <Upload className="w-4 h-4" /> Export
         </button>
-        <button onClick={checkAll} disabled={!ctlOk || busy}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-semibold text-sm text-white ${!ctlOk || busy ? 'bg-violet-900/50 cursor-not-allowed' : 'bg-violet-600 hover:bg-violet-500'}`}>
+        <button onClick={checkAll} disabled={guard}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-semibold text-sm text-white ${guard ? 'bg-violet-900/50 cursor-not-allowed' : 'bg-violet-600 hover:bg-violet-500'}`}>
           <PlayCircle className="w-4 h-4" /> {busy ? `Checking… (${(job.done + job.failed)}/${job.total})` : `Check ${filter === 'unknown' ? 'Unknown' : 'All'}`}
         </button>
         <button onClick={() => setFilter(f => (f === 'all' ? 'unknown' : 'all'))} title="toggle check filter"
@@ -120,7 +130,7 @@ export default function App() {
                   <td className="text-xs text-slate-400">{fmtDate(a.checked_at)}</td>
                   <td className="text-right whitespace-nowrap">
                     <button title="Copy license" onClick={() => copy(a.license, 'License')} className="rounded p-1.5 hover:bg-slate-700 text-slate-300"><ClipboardCopy className="w-4 h-4" /></button>
-                    <button title="Connect" disabled={!ctlOk || conn.state !== 'idle' || busy} onClick={() => connect(a.license)}
+                    <button title="Connect" disabled={guard} onClick={() => connect(a.license)}
                       className="rounded p-1.5 hover:bg-slate-700 text-emerald-400 disabled:opacity-30"><PlayCircle className="w-4 h-4" /></button>
                     <button title="Delete" onClick={() => remove(a.license)} className="rounded p-1.5 hover:bg-slate-700 text-red-400"><Trash2 className="w-4 h-4" /></button>
                   </td>
