@@ -64,4 +64,12 @@ describe('loginOnly', () => {
     expect(r.live.daysRemaining).toBe(12)
     expect(r.live.payment).toBe('chargeBeeCreditCard')
   })
+
+  it('checkLicense propagates non-login failures instead of classifying them invalid', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const account = fakeAccountJson(dir)
+    const ctl = async () => { throw new Error('disk full') }
+    await expect(checkLicense(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 500, tmpDir: dir }))
+      .rejects.toMatchObject({ message: 'disk full' })
+  })
 })

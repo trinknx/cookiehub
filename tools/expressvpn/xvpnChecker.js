@@ -140,6 +140,7 @@ export async function checkLicense(license, opts = {}) {
   try {
     acc = await loginOnly(license, opts)
   } catch (e) {
+    if (e.code !== 'login_failed') throw e
     result.detail = e.message
     return result
   }
