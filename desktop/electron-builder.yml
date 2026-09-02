@@ -1,0 +1,26 @@
+appId: com.trinknx.xvpnmanager
+productName: XVPN Manager
+directories: { output: release }
+files:
+  - src/main/**
+  - src/preload.js
+  - dist/**
+  - package.json
+extraResources:
+  # packaged seed read by main/index.js (process.resourcesPath/accounts.txt).
+  # note: 'optional: true' from the plan brief is not a valid extraResources
+  # property in electron-builder 25 (schema rejects it) — from/to kept as-is;
+  # the seed file exists in this tree so it always packages.
+  - from: ../tools/expressvpn/accounts.txt
+    to: accounts.txt
+  # src/main imports the shared vault parser via ../../../tools/expressvpn/,
+  # which resolves to <resources>/tools/expressvpn/ in the packaged app; the
+  # type:module marker package.json must ship alongside it or the packaged
+  # file loads as CommonJS and the named-export import fails at startup
+  - from: ../tools/expressvpn/xvpnChecker.js
+    to: tools/expressvpn/xvpnChecker.js
+  - from: ../tools/expressvpn/package.json
+    to: tools/expressvpn/package.json
+win:
+  target: [nsis, portable]
+asar: true

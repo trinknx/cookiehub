@@ -50,6 +50,20 @@ Reads `tools/expressvpn/accounts.txt`, writes `report.csv`/`report.json` next to
 
 > **Note (fresh clones):** npm may block install scripts for native modules (`better-sqlite3`, `esbuild`). If `npm install` output mentions blocked scripts, run `npm approve-scripts` (or configure allowed scripts per your npm version) and re-run `npm install` / `npm rebuild better-sqlite3 esbuild`.
 
+## XVPN Manager (desktop)
+
+Electron app for the ExpressVPN license vault — import/list/check/export plus one-click Connect. Lives in `desktop/`:
+
+```bash
+npm install            # postinstall rebuilds better-sqlite3 for Electron
+npm run dev -w desktop     # dev: vite (5174) + electron
+npm run dist -w desktop    # NSIS installer + portable exe in desktop/release/
+```
+
+First run seeds from `tools/expressvpn/accounts.txt`. Check/Connect need the ExpressVPN desktop app installed (default `expressvpnctl` path). Data: `%APPDATA%/xvpn-manager/xvpn-manager.db` (plain SQLite, no encryption — personal machine assumption).
+
+**Troubleshooting (Windows dev environment):** running `npm test -w desktop` flips the nested `better-sqlite3` to the Node ABI — if `npm run dev -w desktop` or the next package build then fails with `ERR_DLOPEN_FAILED` / `NODE_MODULE_VERSION`, re-run the desktop rebuild first (`npm run postinstall -w desktop`). On Node 26, `extract-zip` 2.0.1 may silently fail to extract the Electron download — if `electron .` exits immediately with no binary, re-extract `node_modules/electron/electron-v*.zip` manually into `node_modules/electron/dist` (and write `electron.exe` into `node_modules/electron/path.txt`). Packaging output is `desktop/release/` (gitignored); if your tree is watched by an indexer that locks fresh artifacts mid-build, redirect the build out of the tree with `npx electron-builder --win nsis portable -c.directories.output="<tempdir>"`.
+
 ## Deploy (Linux VPS)
 
 ```bash
