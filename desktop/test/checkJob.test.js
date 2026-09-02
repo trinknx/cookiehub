@@ -55,4 +55,48 @@ describe('checkJob', () => {
     expect(seen.length).toBeLessThanOrEqual(2) // current one finishes, rest skipped
     expect(job.status().running).toBe(false)
   })
+
+  it('clears running when the initial progress event throws', async () => {
+    let eventCount = 0
+    const job = createCheckJob({
+      selectLicenses: () => ['A'],
+      applyResult: () => {},
+      check: async () => ({ state: 'valid', detail: '', live: null }),
+      delayMs: 0,
+      onEvent: () => { if (++eventCount === 1) throw new Error('event boom') },
+    })
+    job.start('all')
+    await new Promise(r => setTimeout(r, 0))
+    expect(job.status()).toMatchObject({ running: false, current: null, error: 'event boom' })
+  })
+
+  it('cancel interrupts an inter-license delay promptly', async () => {
+    const seen = []
+    const job = createCheckJob({
+      selectLicenses: () => ['A', 'B'],
+      applyResult: () => {},
+      check: async l => { seen.push(l); return { state: 'valid', detail: '', live: null } },
+      delayMs: 250,
+    })
+    job.start('all')
+    await new Promise(r => setTimeout(r, 25))
+    const cancelledAt = Date.now()
+    job.cancel()
+    await idle(job)
+    expect(Date.now() - cancelledAt).toBeLessThan(150)
+    expect(job.status().running).toBe(false)
+    expect(seen).toEqual(['A'])
+  })
+
+  it('exposes only the documented status fields', () => {
+    const { job } = setup(['A'])
+    expect(job.status()).toEqual({
+      running: false,
+      total: 0,
+      done: 0,
+      failed: 0,
+      current: null,
+      error: '',
+    })
+  })
 })
