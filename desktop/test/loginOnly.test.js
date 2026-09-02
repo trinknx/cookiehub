@@ -1,10 +1,15 @@
-import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { describe, it, expect, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { loginOnly, checkLicense } from '../../tools/expressvpn/xvpnChecker.js'
 
 const LICENSE = 'ETESTLICENSE00000000000A'
+
+
+// every test gets a fresh tmpdir; afterEach removes them so lo-* dirs don't leak
+const tmpDirs = []
+const mkTmp = () => { const dir = mkdtempSync(path.join(tmpdir(), 'lo-')); tmpDirs.push(dir); return dir }
 
 function fakeAccountJson(dir) {
   const p = path.join(dir, 'account.json')
@@ -29,7 +34,7 @@ function fakeCtl(account) {
 
 describe('loginOnly', () => {
   it('logs in and resolves the confirmed account frame', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const dir = mkTmp()
     const account = fakeAccountJson(dir)
     const ctl = fakeCtl(account)
     const acc = await loginOnly(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 1000, tmpDir: dir })
@@ -40,7 +45,7 @@ describe('loginOnly', () => {
   })
 
   it('resolves null when the server never confirms (rejected code)', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const dir = mkTmp()
     const account = fakeAccountJson(dir)
     const ctl = async (cmd) => { if (cmd[0] === 'login') account.set({ activationCode: LICENSE, loggedIn: false }); return { code: 0, out: '', err: '' } }
     const acc = await loginOnly(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 500, tmpDir: dir })
@@ -48,7 +53,7 @@ describe('loginOnly', () => {
   })
 
   it('throws login_failed when ctl login exits non-zero', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const dir = mkTmp()
     const account = fakeAccountJson(dir)
     const ctl = async (cmd) => (cmd[0] === 'login' ? { code: 3, out: '', err: 'boom' } : { code: 0, out: '', err: '' })
     await expect(loginOnly(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 500, tmpDir: dir }))
@@ -56,7 +61,7 @@ describe('loginOnly', () => {
   })
 
   it('checkLicense still classifies via the shared sequence', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const dir = mkTmp()
     const account = fakeAccountJson(dir)
     const ctl = fakeCtl(account)
     const r = await checkLicense(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 1000, tmpDir: dir })
@@ -66,10 +71,14 @@ describe('loginOnly', () => {
   })
 
   it('checkLicense propagates non-login failures instead of classifying them invalid', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'lo-'))
+    const dir = mkTmp()
     const account = fakeAccountJson(dir)
     const ctl = async () => { throw new Error('disk full') }
     await expect(checkLicense(LICENSE, { ctl, accountJsonPath: account.path, settleMs: 1, confirmTimeoutMs: 500, tmpDir: dir }))
       .rejects.toMatchObject({ message: 'disk full' })
   })
+})
+
+afterEach(() => {
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })

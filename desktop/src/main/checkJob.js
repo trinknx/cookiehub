@@ -53,7 +53,7 @@ export function createCheckJob({ selectLicenses, applyResult, check, delayMs = 1
       run(licenses).catch(e => { job.error = e.message })
       return { started: true, total: licenses.length }
     },
-    cancel: () => { if (job.running) job.cancelRequested = true; return job.cancelRequested },
+    cancel: () => { if (!job.running) return false; job.cancelRequested = true; return true },
     status,
   }
 }

@@ -56,6 +56,15 @@ describe('checkJob', () => {
     expect(job.status().running).toBe(false)
   })
 
+  it('cancel() returns true only while running — false before start and after a cancelled run', async () => {
+    const { job } = setup(['A', 'B', 'C'])
+    expect(job.cancel()).toBe(false) // never started
+    job.start('all')
+    expect(job.cancel()).toBe(true) // running → cancel requested
+    await idle(job)
+    expect(job.cancel()).toBe(false) // run already finished cancelled; stale true would lie
+  })
+
   it('clears running when the initial progress event throws', async () => {
     let eventCount = 0
     const job = createCheckJob({

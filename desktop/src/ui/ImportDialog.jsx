@@ -17,11 +17,11 @@ export default function ImportDialog({ onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-slate-800 rounded-xl p-5 w-full max-w-2xl space-y-3" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-6" onClick={onClose} onKeyDown={e => { if (e.key === 'Escape') onClose() }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="import-dialog-title" className="bg-slate-800 rounded-xl p-5 w-full max-w-2xl space-y-3" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
-          <h2 className="font-bold">Import licenses</h2>
-          <button onClick={onClose} className="rounded p-1 hover:bg-slate-700"><X className="w-4 h-4" /></button>
+          <h2 id="import-dialog-title" className="font-bold">Import licenses</h2>
+          <button onClick={onClose} aria-label="Close" className="rounded p-1 hover:bg-slate-700"><X className="w-4 h-4" /></button>
         </div>
         <p className="text-xs text-slate-400">Paste vault lines (email:password | … | License=…). Junk lines are skipped; duplicates by license update in place.</p>
         <textarea value={text} onChange={e => setText(e.target.value)} rows={12} autoFocus
