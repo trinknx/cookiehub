@@ -70,9 +70,18 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
+// A bootstrap failure (native module ABI, corrupt db, …) must be LOUD — the
+// first packaged build died here silently: unhandled rejection, no window,
+// headless process. Show the error and exit instead.
 app.whenReady().then(() => {
-  bootstrap()
-  createWindow()
+  try {
+    bootstrap()
+    createWindow()
+  } catch (e) {
+    console.error('[xvpn] fatal:', e)
+    dialog.showErrorBox('XVPN Manager failed to start', `${e?.message || e}\n\nIf this mentions NODE_MODULE_VERSION, rebuild the native module for Electron (see README troubleshooting).`)
+    app.exit(1)
+  }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
