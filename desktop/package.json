@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5174 && cross-env VITE_DEV=1 electron .\"",
     "build:ui": "vite build",
+    "dist": "npm run build:ui && electron-builder",
     "postinstall": "node -e \"const p=require('path');const {rebuild}=require('@electron/rebuild');rebuild({buildPath:p.resolve('.'),projectRootPath:p.resolve('.'),onlyModules:['better-sqlite3'],force:true,electronVersion:require('electron/package.json').version}).then(()=>console.log('better-sqlite3 rebuilt for Electron ABI (scoped to desktop/node_modules)')).catch(e=>{console.error(e);process.exit(1)})\"",
     "test": "vitest run --passWithNoTests"
   },
