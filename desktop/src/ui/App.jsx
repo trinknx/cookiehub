@@ -34,10 +34,12 @@ export default function App() {
   useEffect(() => {
     load().catch(() => {})
     Promise.all([
-      window.xvpn.ctlAvailable().then(setCtlOk, () => setCtlOk(false)),
-      window.xvpn.checkStatus().then(setJob, () => {}),
-      window.xvpn.connectStatus().then(setConn, () => setConn({ state: 'idle' })),
-    ]).then(() => setLoaded(true))
+      window.xvpn.ctlAvailable(),
+      window.xvpn.checkStatus(),
+      window.xvpn.connectStatus(),
+    ]).then(([ctl, job, conn]) => {
+      setCtlOk(ctl); setJob(job); setConn(conn); setLoaded(true)
+    }).catch(e => flash(err(e)))
     const offP = window.xvpn.onCheckProgress(s => { setJob(s); if (!s.running && s.total) load().catch(() => {}) })
     const offC = window.xvpn.onConnectState(setConn)
     return () => { offP(); offC() }
