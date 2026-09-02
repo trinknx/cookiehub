@@ -19,8 +19,9 @@ export function createConnectManager({ login, ctl, state, isBusy, connectTimeout
     let s
     try { s = await state() } finally { starting = false }
     if (s !== 'Disconnected') throw coded('vpn_active', `VPN state is "${s}" — disconnect first`)
-    st = 'connecting'; current = { license, email }; emit()
+    st = 'connecting'; current = { license, email }
     try {
+      emit()
       const acc = await login(license)
       if (!acc) throw coded('login_rejected', 'server rejected the activation code')
       const r = await ctl(['connect'], 90000)
@@ -37,24 +38,36 @@ export function createConnectManager({ login, ctl, state, isBusy, connectTimeout
     } catch (e) {
       await cleanup()
       try { await ctl(['logout'], 30000) } catch { /* best-effort */ }
-      st = 'idle'; current = null; emit()
+      st = 'idle'; current = null
+      try { emit() } catch { /* best-effort */ }
       throw e
     }
   }
 
   async function disconnect() {
+    if (starting) throw coded('busy', 'connect manager is connecting')
     if (st === 'idle') return { ok: true }
     if (st !== 'connected') throw coded('busy', `connect manager is ${st}`)
-    st = 'disconnecting'; emit()
-    try { await ctl(['disconnect'], 90000) } catch { /* best-effort */ }
-    const deadline = Date.now() + disconnectTimeoutMs
-    for (;;) {
-      const cur = await state()
-      if (cur === 'Disconnected' || Date.now() > deadline) break
-      await sleep(pollMs)
+    st = 'disconnecting'
+    let disconnectIssued = false
+    try {
+      emit()
+      disconnectIssued = true
+      try { await ctl(['disconnect'], 90000) } catch { /* best-effort */ }
+      const deadline = Date.now() + disconnectTimeoutMs
+      for (;;) {
+        const cur = await state()
+        if (cur === 'Disconnected' || Date.now() > deadline) break
+        await sleep(pollMs)
+      }
+    } catch (e) {
+      if (!disconnectIssued) await cleanup()
+      throw e
+    } finally {
+      try { await ctl(['logout'], 30000) } catch { /* best-effort */ }
+      st = 'idle'; current = null
+      try { emit() } catch { /* best-effort */ }
     }
-    try { await ctl(['logout'], 30000) } catch { /* best-effort */ }
-    st = 'idle'; current = null; emit()
     return { ok: true }
   }
 
