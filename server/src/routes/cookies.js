@@ -156,6 +156,14 @@ export function cookieRoutes({ db, engine, adapters }) {
     res.json({ removed: info.changes })
   })
 
+  r.post('/remove-on-hold', (req, res) => {
+    const { service } = req.body || {}
+    if (typeof service !== 'string' || !service) return err(res, 'service_required', 'service is required', 400)
+    if (!adapters.has(service)) return err(res, 'unknown_service', `unknown service: ${service}`, 400)
+    const info = db.prepare("DELETE FROM cookies WHERE status='on_hold' AND service_key=?").run(service)
+    res.json({ removed: info.changes })
+  })
+
   r.post('/remove-duplicates', (req, res) => {
     const { service } = req.body || {}
     if (service !== undefined && !adapters.has(service)) return err(res, 'unknown_service', `unknown service: ${service}`, 400)
@@ -172,7 +180,10 @@ export function cookieRoutes({ db, engine, adapters }) {
       for (const list of groups.values()) {
         if (list.length < 2) continue
         groupCount++
-        const ranked = list.sort((a, b) => (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1) || b.id - a.id)
+        const ranked = list.sort((a, b) =>
+          (a.status === 'live' ? 0 : a.status === 'on_hold' ? 1 : 2) -
+          (b.status === 'live' ? 0 : b.status === 'on_hold' ? 1 : 2) ||
+          b.id - a.id)
         delIds.push(...ranked.slice(1).map(r => r.id))
       }
       // json_each: one bind param regardless of id count
@@ -185,7 +196,7 @@ export function cookieRoutes({ db, engine, adapters }) {
 
   r.post('/check-all', (req, res) => {
     const { service, status } = req.body || {}
-    if (status !== undefined && (typeof status !== 'string' || !/^(unknown|live|die)$/.test(status))) {
+    if (status !== undefined && (typeof status !== 'string' || !/^(unknown|live|die|on_hold)$/.test(status))) {
       return err(res, 'invalid_status', `invalid status filter: ${status}`, 400)
     }
     try {

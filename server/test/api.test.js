@@ -201,18 +201,28 @@ describe('cookies api', () => {
     const r = await agent.post('/api/cookies/check-all').send({ status: ['unknown'] }).expect(400)
     expect(r.body.error.code).toBe('invalid_status')
   })
+  it('check-all accepts on_hold and queues only held accounts', async () => {
+    const create = async status => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=? WHERE id=?').run(status, created[0].id)
+    }
+    await create('on_hold')
+    await create('live')
+    const r = await agent.post('/api/cookies/check-all').send({ status: 'on_hold' }).expect(200)
+    expect(r.body.queued).toBe(1)
+  })
 
   it('remove-die deletes all die cookies across services; live/unknown untouched', async () => {
     const seed = async (status, service = 'netflix') => {
       const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
       ctx.db.prepare('UPDATE cookies SET status=?, service_key=? WHERE id=?').run(status, service, created[0].id)
     }
-    await seed('die'); await seed('die'); await seed('live'); await seed('unknown'); await seed('die', 'spotify')
+    await seed('die'); await seed('die'); await seed('live'); await seed('unknown'); await seed('on_hold'); await seed('die', 'spotify')
     const r = await agent.post('/api/cookies/remove-die').send({}).expect(200)
     expect(r.body).toEqual({ removed: 3 })
     const list = await agent.get('/api/cookies').expect(200)
-    expect(list.body.total).toBe(2)
-    expect(list.body.items.map(i => i.status).sort()).toEqual(['live', 'unknown'])
+    expect(list.body.total).toBe(3)
+    expect(list.body.items.map(i => i.status).sort()).toEqual(['live', 'on_hold', 'unknown'])
   })
   it('remove-die scoped to one service only', async () => {
     const seed = async (status, service) => {
@@ -228,8 +238,33 @@ describe('cookies api', () => {
   it('remove-die unknown service → 400', async () => {
     await agent.post('/api/cookies/remove-die').send({ service: 'nope' }).expect(400)
   })
+  it('remove-on-hold deletes only held accounts in the requested service', async () => {
+    const seed = async (status, service = 'netflix') => {
+      const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
+      ctx.db.prepare('UPDATE cookies SET status=?, service_key=? WHERE id=?').run(status, service, created[0].id)
+    }
+    await seed('on_hold')
+    await seed('on_hold')
+    await seed('live')
+    await seed('die')
+    await seed('unknown')
+    await seed('on_hold', 'spotify')
+    const r = await agent.post('/api/cookies/remove-on-hold').send({ service: 'netflix' }).expect(200)
+    expect(r.body).toEqual({ removed: 2 })
+    expect((await agent.get('/api/cookies?service=netflix')).body.items.map(i => i.status).sort())
+      .toEqual(['die', 'live', 'unknown'])
+    expect((await agent.get('/api/cookies?service=spotify&status=on_hold')).body.total).toBe(1)
+  })
+  it('remove-on-hold rejects an unknown service', async () => {
+    const r = await agent.post('/api/cookies/remove-on-hold').send({ service: 'nope' }).expect(400)
+    expect(r.body.error.code).toBe('unknown_service')
+  })
+  it('remove-on-hold requires an explicit service scope', async () => {
+    const r = await agent.post('/api/cookies/remove-on-hold').send({}).expect(400)
+    expect(r.body.error.code).toBe('service_required')
+  })
 
-  it('remove-duplicates keeps live first then newest, case-insensitive; rows without email untouched', async () => {
+  it('remove-duplicates keeps live then on_hold before falling back to newest', async () => {
     const seed = async (email, status, service = 'netflix') => {
       const { body: { created } } = await agent.post('/api/cookies').send({ service: 'netflix', content: HDR })
       ctx.db.prepare('UPDATE cookies SET status=?, service_key=?, account_info=? WHERE id=?')
@@ -242,16 +277,20 @@ describe('cookies api', () => {
     const b1 = await seed('b@y', 'die')
     const c1 = await seed('c@z', 'die')
     const c2 = await seed('c@z', 'die') // both die → keep newest (highest id)
+    const dHold = await seed('d@h', 'on_hold')
+    const dDie = await seed('d@h', 'die') // newer, but authenticated held cookie must win
     const noEmail = await seed(null, 'die') // no email → never touched
 
     const r = await agent.post('/api/cookies/remove-duplicates').send({}).expect(200)
-    expect(r.body).toEqual({ removed: 3, kept: 2, groups: 2 })
+    expect(r.body).toEqual({ removed: 4, kept: 3, groups: 3 })
     const list = await agent.get('/api/cookies').expect(200)
     const byId = Object.fromEntries(list.body.items.map(i => [i.id, i]))
-    expect(Object.keys(byId).map(Number).sort((x, y) => x - y)).toEqual([b1, a2, c2, noEmail].sort((x, y) => x - y))
+    expect(Object.keys(byId).map(Number).sort((x, y) => x - y)).toEqual([b1, a2, c2, dHold, noEmail].sort((x, y) => x - y))
     expect(byId[a2].status).toBe('live') // live beats newer id (a3)
     expect(byId[c2]).toBeTruthy() // newest of the die pair
     expect(byId[c1]).toBeUndefined()
+    expect(byId[dHold]?.status).toBe('on_hold')
+    expect(byId[dDie]).toBeUndefined()
     expect(byId[noEmail].account_info).toBeNull() // no-email row survived
     // after removal nothing is a duplicate anymore
     expect(list.body.items.every(i => i.dup === false)).toBe(true)

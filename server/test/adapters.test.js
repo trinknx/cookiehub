@@ -127,6 +127,7 @@ describe('netflix adapter', () => {
   const ACCOUNT_HTML = [
     `<script>reactContext = {"userInfo":{"data":{${REACT_CONTEXT}}}};</script>`,
     `<script type="application/json">${FORM_MODEL}</script>`,
+    '<script>"growthHoldMetadata":{"__typename":"GrowthHoldMetadata","isUserOnHold":false,"retryEligibility":"ELIGIBLE","serviceEndReason":null}</script>',
     // decoys: marketing copy + the old (dead) data-uia hooks must not leak in
     '<div data-uia="plan-name"><div>Premium</div></div>',
     '<div data-uia="next-bill-date">August 30, 2026</div>',
@@ -147,6 +148,29 @@ describe('netflix adapter', () => {
       nextBilling: '24 September 2026', // \x20 unescaped; decoy data-uia="next-bill-date" ignored
       nextBillingIso: '2026-09-24',
       extra: { maxStreams: 2, videoQuality: 'HD' }
+    })
+  })
+  it('payment hold remains authenticated but returns on_hold with account info', async () => {
+    const heldHtml = ACCOUNT_HTML.replace(
+      '"isUserOnHold":false,"retryEligibility":"ELIGIBLE","serviceEndReason":null',
+      '"isUserOnHold":true,"retryEligibility":"NOT_ELIGIBLE","serviceEndReason":"SERVICE_END_PAYMENT_FAILURE"'
+    )
+    const r = await netflix.check(ctxOf([
+      res(200, '<html><body>browse page</body></html>'),
+      res(200, heldHtml)
+    ]))
+    expect(r).toMatchObject({
+      status: 'on_hold',
+      reason: expect.stringContaining('SERVICE_END_PAYMENT_FAILURE'),
+      accountInfo: {
+        plan: 'Standard',
+        email: 'mikekugler1@gmail.com',
+        country: 'US',
+        memberSince: 'December 2023',
+        nextBilling: '24 September 2026',
+        nextBillingIso: '2026-09-24',
+        extra: { maxStreams: 2, videoQuality: 'HD' }
+      }
     })
   })
   it('localized VN page → canonical plan tier + planLocalized + VN billing ISO', async () => {

@@ -172,9 +172,16 @@ export default {
     let browseHtml = ''
     try { browseHtml = await res.text() } catch (e) { log(`browse body read failed: ${e.message}`) }
     const info = {}
+    let onHold = false
+    let holdReason = null
     try {
       const acc = await fetch('https://www.netflix.com/account', { headers: { 'user-agent': UA } })
       const html = await acc.text()
+      const holdMetadata = html.match(/"growthHoldMetadata":\{[^}]*\}/)?.[0]
+      if (holdMetadata && /"isUserOnHold":true/.test(holdMetadata)) {
+        onHold = true
+        holdReason = holdMetadata.match(/"serviceEndReason":"([^"]+)"/)?.[1] || null
+      }
       // /account embeds TWO data sources (verified char-by-char against a live
       // US page, 2026-08-25):
       // 1) a form-render model as PLAIN-quote JSON — raw bytes look like
@@ -232,7 +239,11 @@ export default {
       } catch (e) { log(`profiles fetch failed: ${e.message}`) }
     }
     if (profiles) info.profiles = profiles
-    return { status: 'live', reason: 'logged in', accountInfo: Object.keys(info).length ? info : undefined }
+    return {
+      status: onHold ? 'on_hold' : 'live',
+      reason: onHold ? `payment hold${holdReason ? `: ${holdReason}` : ''}` : 'logged in',
+      accountInfo: Object.keys(info).length ? info : undefined
+    }
   },
 
   // Mint an nftoken login link from the stored session. Only the three auth

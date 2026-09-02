@@ -142,13 +142,13 @@ export function createEngine({ db, adapters }) {
       const dispatcher = buildDispatcher(proxy)
       const boundFetch = makeBoundFetch(row.service_key, cookieHeader, dispatcher)
       const result = await adapter.check({ cookieHeader, cookies, fetch: boundFetch, proxy, log: () => {} })
-      const status = result.status === 'live' ? 'live' : 'die'
+      const status = result.status === 'live' || result.status === 'on_hold' ? result.status : 'die'
       // deleted while the adapter was in flight — nothing to persist; returning the
       // adapter's status keeps check-all done/failed accounting sane
       if (!cookieExists.get(cookieId)) return status
       const now = Date.now()
       db.transaction(() => {
-        if (status === 'live') {
+        if (status === 'live' || status === 'on_hold') {
           db.prepare('UPDATE cookies SET status=?, account_info=COALESCE(?, account_info), last_checked_at=?, updated_at=? WHERE id=?')
             .run(status, result.accountInfo ? JSON.stringify(result.accountInfo) : null, now, now, cookieId)
         } else {
@@ -258,7 +258,7 @@ export function createEngine({ db, adapters }) {
     if (serviceKey) { sql += ' AND c.service_key = ?'; params.push(serviceKey) }
     // recheck-unknown & friends: restrict the queue to one status. Non-string or
     // invalid values are ignored (no filter) — the route layer rejects bad input.
-    if (typeof statusFilter === 'string' && /^(unknown|live|die)$/.test(statusFilter)) { sql += ' AND c.status = ?'; params.push(statusFilter) }
+    if (typeof statusFilter === 'string' && /^(unknown|live|die|on_hold)$/.test(statusFilter)) { sql += ' AND c.status = ?'; params.push(statusFilter) }
     sql += ' ORDER BY c.id DESC'
     const rows = db.prepare(sql).all(...params)
     job.running = true; job.pending = rows.length; job.done = 0; job.failed = 0

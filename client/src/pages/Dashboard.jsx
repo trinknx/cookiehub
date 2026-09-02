@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import {
   ArrowDownWideNarrow, ArrowLeft, ArrowUpWideNarrow, Bot, ChevronRight, Clapperboard, ClipboardCopy, Copy, CopyX, FileJson, Film, FolderOpen, Link2, Music2,
-  PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Sparkles, Trash2, Tv, Upload, Users
+  PauseCircle, PlayCircle, Plus, RefreshCw, RotateCcw, RotateCw, Settings, Sparkles, Trash2, Tv, Upload, Users
 } from 'lucide-react'
 
-const STATUS_STYLE = { live: 'bg-emerald-600', die: 'bg-red-600', unknown: 'bg-slate-600' }
+const STATUS_STYLE = { live: 'bg-emerald-600', die: 'bg-red-600', on_hold: 'bg-amber-500/20 text-amber-300', unknown: 'bg-slate-600' }
 const SERVICE_STYLE = {
   netflix: { gradient: 'linear-gradient(135deg,#E50914,#B20710)', Icon: Clapperboard, dot: '#E50914' },
   spotify: { gradient: 'linear-gradient(135deg,#1DB954,#169C46)', Icon: Music2, dot: '#1DB954' },
@@ -171,6 +171,14 @@ export default function Dashboard() {
       await Promise.all([load(), loadServices()])
     } catch (e) { showToast(e.message) }
   }
+  const removeOnHold = async (key, name) => {
+    if (!confirm(`Remove all ON HOLD accounts of ${name}?`)) return
+    try {
+      const r = await api('/cookies/remove-on-hold', { method: 'POST', body: { service: key } })
+      showToast(`removed ${r.removed} on hold`)
+      await Promise.all([load(), loadServices()])
+    } catch (e) { showToast(e.message) }
+  }
   const removeDuplicates = async key => {
     if (!confirm('Remove duplicate accounts (same email)? Keeps the live/newest of each.')) return
     try {
@@ -238,6 +246,10 @@ export default function Dashboard() {
                       className="rounded-lg p-1.5 text-sky-300 hover:text-sky-200 hover:bg-sky-600/20 disabled:opacity-40"><RotateCcw className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); removeDie(s.key, s.name) }} title="Remove die accounts"
                       className="rounded-lg p-1.5 text-red-400 hover:text-red-300 hover:bg-red-600/20"><Trash2 className="w-4 h-4" /></button>
+                    {s.key === 'netflix' && (
+                      <button onClick={e => { e.stopPropagation(); removeOnHold(s.key, s.name) }} title="Remove on-hold accounts" aria-label={`Remove on-hold accounts of ${s.name}`}
+                        className="rounded-lg p-1.5 text-amber-300 hover:text-amber-200 hover:bg-amber-600/20"><PauseCircle className="w-4 h-4" /></button>
+                    )}
                     <button onClick={e => { e.stopPropagation(); removeDuplicates(s.key) }} disabled={job?.running} title="Remove duplicate accounts (same email)"
                       className="rounded-lg p-1.5 text-amber-300 hover:text-amber-200 hover:bg-amber-600/20 disabled:opacity-40"><CopyX className="w-4 h-4" /></button>
                     <button onClick={e => { e.stopPropagation(); openService(s.key) }} title={`Open ${s.name}`}
@@ -264,7 +276,7 @@ export default function Dashboard() {
               className="ml-auto rounded bg-slate-800 border border-slate-700 px-3 py-1.5" />
             <select value={fStatus} onChange={e => { setPage(1); setFStatus(e.target.value) }} className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
               <option value="">all status</option>
-              <option value="live">live</option><option value="die">die</option><option value="unknown">unknown</option>
+              <option value="live">live</option><option value="die">die</option><option value="on_hold">on hold</option><option value="unknown">unknown</option>
             </select>
             <select value={fSort.replace(/^-/, '')} onChange={e => { setPage(1); setFSort(e.target.value) }} title="Sort by account tags"
               className="rounded bg-slate-800 border border-slate-700 px-3 py-1.5">
@@ -289,6 +301,12 @@ export default function Dashboard() {
               className="flex items-center gap-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 px-3 py-1.5 text-sm font-semibold">
               <Trash2 className="w-4 h-4" /> Remove die
             </button>
+            {view.key === 'netflix' && (
+              <button onClick={() => removeOnHold(view.key, current?.name || view.key)}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 px-3 py-1.5 text-sm font-semibold">
+                <PauseCircle className="w-4 h-4" /> Remove on hold
+              </button>
+            )}
             <button onClick={() => removeDuplicates(view.key)} disabled={job?.running}
               className="flex items-center gap-1.5 rounded-lg bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 px-3 py-1.5 text-sm font-semibold disabled:opacity-50">
               <CopyX className="w-4 h-4" /> Remove duplicates
@@ -309,7 +327,7 @@ export default function Dashboard() {
                       <td className="p-3">{c.service_key}</td>
                       <td className="p-3">{checking
                         ? <span className="bg-amber-500 animate-pulse text-white text-xs font-bold rounded px-2 py-0.5 uppercase">checking…</span>
-                        : <span className={`${STATUS_STYLE[c.status]} text-white text-xs font-bold rounded px-2 py-0.5 uppercase`}>{c.status}</span>}</td>
+                        : <span className={`${STATUS_STYLE[c.status] || STATUS_STYLE.unknown} whitespace-nowrap rounded px-2 py-0.5 text-xs font-bold uppercase ${c.status === 'on_hold' ? '' : 'text-white'}`}>{c.status === 'on_hold' ? 'on hold' : c.status}</span>}</td>
                       <td className="p-3 text-slate-300"><AccountTags info={c.account_info} dup={c.dup} /></td>
                       <td className="p-3 text-slate-400">{c.last_checked_at ? new Date(c.last_checked_at).toLocaleString() : 'never'}</td>
                       <td className="p-3 whitespace-nowrap">

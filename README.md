@@ -1,12 +1,12 @@
 # CookieHub
 
-Personal single-user cookie manager (Netscape + header string) with live/die checks for Netflix, Spotify, and any service you add an adapter for. Not for public use.
+Personal single-user cookie manager (Netscape + header string) with live/die checks, plus Netflix payment-hold detection, for Netflix, Spotify, and any service you add an adapter for. Not for public use.
 
 ## Features
 
 - Import/export cookies as Netscape or header string (auto-detected, bulk import via blank-line separation)
 - Import Cookie-Editor JSON array files (bulk files with mixed text — JSON arrays auto-extracted)
-- LIVE/DIE checks with account info (email, plan, expiry, country where available)
+- LIVE/DIE checks with account info (email, plan, expiry, country where available); Netflix payment holds use a separate ON HOLD status and cleanup action
 - Manual per-cookie / check-all + scheduled auto-check (interval-based, 1-168h)
 - Per-service or global proxy support (http/https/socks5)
 - Cookies encrypted at rest (AES-256-GCM); single-password login (argon2id); login rate limiting

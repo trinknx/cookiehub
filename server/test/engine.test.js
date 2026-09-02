@@ -44,6 +44,24 @@ describe('engine', () => {
     expect(JSON.parse(row.account_info)).toEqual({ email: 'a@b.c' })
     expect(db.prepare('SELECT * FROM check_logs WHERE cookie_id=?').get(id)).toMatchObject({ status: 'live', reason: 'ok' })
   })
+  it('on_hold result preserves its status, account info, and log reason', async () => {
+    const db = openDb()
+    const [id] = seed(db, 'fake')
+    const result = {
+      status: 'on_hold',
+      reason: 'payment hold: SERVICE_END_PAYMENT_FAILURE',
+      accountInfo: { email: 'held@example.com', plan: 'Premium' }
+    }
+    const engine = createEngine({ db, adapters: new Map([['fake', fakeAdapter(result)]]) })
+    expect(await engine.runCheck(id)).toBe('on_hold')
+    const row = db.prepare('SELECT status, account_info FROM cookies WHERE id=?').get(id)
+    expect(row.status).toBe('on_hold')
+    expect(JSON.parse(row.account_info)).toEqual({ email: 'held@example.com', plan: 'Premium' })
+    expect(db.prepare('SELECT status, reason FROM check_logs WHERE cookie_id=?').get(id)).toEqual({
+      status: 'on_hold',
+      reason: 'payment hold: SERVICE_END_PAYMENT_FAILURE'
+    })
+  })
   it('boundFetch sends stored cookies as cookie header; adapter-supplied cookie wins', async () => {
     const db = openDb()
     const [id] = seed(db, 'fake')
