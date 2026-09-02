@@ -23,31 +23,46 @@ const store = () => {
   }
 }
 
+const deps = over => ({
+  store: store(),
+  checkJob: { start: () => ({ started: true, total: 1 }), status: () => ({ running: false }), cancel: () => true },
+  connectManager: { connect: async () => ({ connected: true }), disconnect: async () => ({ ok: true }), status: () => ({ state: 'idle' }) },
+  ctlAvailable: true,
+  connectionState: async () => 'Disconnected',
+  send: () => {},
+  ...over,
+})
+
 describe('ipc', () => {
   it('registers every channel the preload uses', () => {
     const ipcMain = fakeIpcMain()
-    registerIpc({ ipcMain, store: store(), checkJob: { start: () => ({ started: true, total: 1 }), status: () => ({ running: false }), cancel: () => true }, connectManager: { connect: async () => ({ ok: true }), disconnect: async () => ({ ok: true }), status: () => ({ state: 'idle' }) }, ctlAvailable: true, connectionState: async () => 'Disconnected', send: () => {} })
+    registerIpc(deps({ ipcMain }))
     expect(ipcMain.channels().sort()).toEqual(['accounts:delete', 'accounts:export', 'accounts:import', 'accounts:list', 'check:cancel', 'check:start', 'check:status', 'connect:connect', 'connect:disconnect', 'connect:status', 'ctl:available'])
   })
 
-  it('accounts:list returns rows', async () => {
+  it('success answers with the { ok, data } envelope', async () => {
     const ipcMain = fakeIpcMain()
-    registerIpc({ ipcMain, store: store(), checkJob: { start: () => {}, status: () => ({}), cancel: () => true }, connectManager: { connect: async () => {}, disconnect: async () => {}, status: () => ({}) }, ctlAvailable: true, connectionState: async () => 'Disconnected', send: () => {} })
-    expect(await ipcMain.invoke('accounts:list')).toEqual([{ license: 'L1', email: 'a@b.c' }])
+    registerIpc(deps({ ipcMain }))
+    expect(await ipcMain.invoke('accounts:list')).toEqual({ ok: true, data: [{ license: 'L1', email: 'a@b.c' }] })
   })
 
-  it('check:start guards: ctl missing → ctl_missing; vpn active → vpn_active', async () => {
+  it('check:start guards: ctl missing → ctl_missing; vpn active → vpn_active (as envelope, never a throw)', async () => {
     const ipcMain = fakeIpcMain()
-    const reg = (ctlOk, st) => registerIpc({ ipcMain, store: store(), checkJob: { start: () => ({ started: true, total: 1 }), status: () => ({ running: false }), cancel: () => true }, connectManager: { connect: async () => {}, disconnect: async () => {}, status: () => ({}) }, ctlAvailable: ctlOk, connectionState: async () => st, send: () => {} })
-    reg(false, 'Disconnected')
-    await expect(ipcMain.invoke('check:start', 'all')).rejects.toMatchObject({ code: 'ctl_missing' })
-    reg(true, 'Connected')
-    await expect(ipcMain.invoke('check:start', 'all')).rejects.toMatchObject({ code: 'vpn_active' })
+    registerIpc(deps({ ipcMain, ctlAvailable: false }))
+    const missing = await ipcMain.invoke('check:start', 'all')
+    expect(missing).toMatchObject({ ok: false, code: 'ctl_missing' })
+    expect(missing.message).toEqual(expect.any(String))
+
+    registerIpc(deps({ ipcMain, connectionState: async () => 'Connected' }))
+    const active = await ipcMain.invoke('check:start', 'all')
+    expect(active).toMatchObject({ ok: false, code: 'vpn_active' })
+    expect(Object.keys(active).sort()).toEqual(['code', 'message', 'ok'])
   })
 
-  it('errors from deps surface as { code, message } rejections', async () => {
+  it('errors from deps surface as { ok:false, code, message } envelopes', async () => {
     const ipcMain = fakeIpcMain()
-    registerIpc({ ipcMain, store: store(), checkJob: { start: () => { const e = new Error('a check job is already running'); e.code = 'job_running'; throw e }, status: () => ({ running: false }), cancel: () => true }, connectManager: { connect: async () => {}, disconnect: async () => {}, status: () => ({}) }, ctlAvailable: true, connectionState: async () => 'Disconnected', send: () => {} })
-    await expect(ipcMain.invoke('check:start', 'all')).rejects.toMatchObject({ code: 'job_running' })
+    registerIpc(deps({ ipcMain, checkJob: { start: () => { const e = new Error('a check job is already running'); e.code = 'job_running'; throw e }, status: () => ({ running: false }), cancel: () => true } }))
+    const r = await ipcMain.invoke('check:start', 'all')
+    expect(r).toEqual({ ok: false, code: 'job_running', message: 'a check job is already running' })
   })
 })

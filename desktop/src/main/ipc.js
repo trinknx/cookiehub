@@ -1,9 +1,13 @@
 // Thin wiring: every preload invoke maps to one handler here. Guards that
 // need the ctl (availability, VPN state) live here, not in the modules, so
 // store/checkJob/connectManager stay electron-free.
+// Handlers never throw across the IPC boundary: ipcMain.handle rejections are
+// re-created renderer-side and lose custom properties (err.code), so wrap()
+// answers with a plain envelope — { ok:true, data } | { ok:false, code,
+// message } — which the preload unwraps into a real Error carrying .code.
 const wrap = fn => async (_e, ...args) => {
-  try { return await fn(...args) }
-  catch (err) { throw { code: err.code || 'internal', message: err.message || String(err) } }
+  try { return { ok: true, data: await fn(...args) } }
+  catch (err) { return { ok: false, code: err.code || 'internal', message: err.message || String(err) } }
 }
 
 const coded = (code, message) => Object.assign(new Error(message), { code })
