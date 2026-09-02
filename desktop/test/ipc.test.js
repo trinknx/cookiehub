@@ -29,7 +29,7 @@ const deps = over => ({
   connectManager: { connect: async () => ({ connected: true }), disconnect: async () => ({ ok: true }), status: () => ({ state: 'idle' }) },
   ctlAvailable: true,
   connectionState: async () => 'Disconnected',
-  send: () => {},
+  saveExport: async () => ({ path: 'C:/out/accounts-export.txt' }),
   ...over,
 })
 
@@ -37,7 +37,7 @@ describe('ipc', () => {
   it('registers every channel the preload uses', () => {
     const ipcMain = fakeIpcMain()
     registerIpc(deps({ ipcMain }))
-    expect(ipcMain.channels().sort()).toEqual(['accounts:delete', 'accounts:export', 'accounts:import', 'accounts:list', 'check:cancel', 'check:start', 'check:status', 'connect:connect', 'connect:disconnect', 'connect:status', 'ctl:available'])
+    expect(ipcMain.channels().sort()).toEqual(['accounts:delete', 'accounts:export', 'accounts:exportFile', 'accounts:import', 'accounts:list', 'check:cancel', 'check:start', 'check:status', 'connect:connect', 'connect:disconnect', 'connect:status', 'ctl:available'])
   })
 
   it('success answers with the { ok, data } envelope', async () => {
@@ -64,5 +64,21 @@ describe('ipc', () => {
     registerIpc(deps({ ipcMain, checkJob: { start: () => { const e = new Error('a check job is already running'); e.code = 'job_running'; throw e }, status: () => ({ running: false }), cancel: () => true } }))
     const r = await ipcMain.invoke('check:start', 'all')
     expect(r).toEqual({ ok: false, code: 'job_running', message: 'a check job is already running' })
+  })
+
+  it('check:start rejects connect_active while a connect flow is active', async () => {
+    const ipcMain = fakeIpcMain()
+    registerIpc(deps({ ipcMain, connectManager: { connect: async () => ({}), disconnect: async () => ({}), status: () => ({ state: 'connecting' }) } }))
+    const r = await ipcMain.invoke('check:start', 'all')
+    expect(r).toEqual({ ok: false, code: 'connect_active', message: 'a connect flow is active' })
+  })
+
+  it('accounts:exportFile pipes store.exportLines through saveExport', async () => {
+    const ipcMain = fakeIpcMain()
+    const seen = []
+    registerIpc(deps({ ipcMain, saveExport: async text => { seen.push(text); return { path: 'C:/tmp/accounts-export.txt' } } }))
+    const r = await ipcMain.invoke('accounts:exportFile')
+    expect(seen).toEqual(['a:b | License=L1\n'])
+    expect(r).toEqual({ ok: true, data: { path: 'C:/tmp/accounts-export.txt' } })
   })
 })

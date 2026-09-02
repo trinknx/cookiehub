@@ -66,9 +66,8 @@ export default function App() {
   }
   const doExport = async () => {
     try {
-      const text = await window.xvpn.accountsExport()
-      await navigator.clipboard.writeText(text)
-      flash(`${items.length} licenses copied to clipboard`)
+      const r = await window.xvpn.accountsExportFile()
+      flash(r.canceled ? 'export canceled' : `saved to ${r.path}`)
     } catch (e) { flash(err(e)) }
   }
   const copy = (v, what) => navigator.clipboard.writeText(v).then(() => flash(`${what} copied`), () => {})
@@ -76,6 +75,12 @@ export default function App() {
   const busy = job?.running
   const locked = busy || pending || conn?.state !== 'idle'
   const guard = !loaded || !ctlOk || locked
+  const disabledReason = !loaded ? 'Loading…'
+    : !ctlOk ? 'expressvpnctl not found'
+    : busy ? 'Checking…'
+    : pending ? 'Working…'
+    : conn?.state === 'connected' ? 'VPN connected'
+    : 'Connect active'
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100">
@@ -98,7 +103,7 @@ export default function App() {
         <button onClick={doExport} className="flex items-center gap-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 px-3 py-2 font-semibold text-sm">
           <Upload className="w-4 h-4" /> Export
         </button>
-        <button onClick={checkAll} disabled={guard}
+        <button onClick={checkAll} disabled={guard} title={guard ? disabledReason : undefined}
           className={`flex items-center gap-1.5 rounded-lg px-3 py-2 font-semibold text-sm text-white ${guard ? 'bg-violet-900/50 cursor-not-allowed' : 'bg-violet-600 hover:bg-violet-500'}`}>
           <PlayCircle className="w-4 h-4" /> {busy ? `Checking… (${(job.done + job.failed)}/${job.total})` : `Check ${filter === 'unknown' ? 'Unknown' : 'All'}`}
         </button>
@@ -132,7 +137,7 @@ export default function App() {
                   <td className="text-xs text-slate-400">{fmtDate(a.checked_at)}</td>
                   <td className="text-right whitespace-nowrap">
                     <button title="Copy license" onClick={() => copy(a.license, 'License')} className="rounded p-1.5 hover:bg-slate-700 text-slate-300"><ClipboardCopy className="w-4 h-4" /></button>
-                    <button title="Connect" disabled={guard} onClick={() => connect(a.license)}
+                    <button title={guard ? disabledReason : 'Connect'} disabled={guard} onClick={() => connect(a.license)}
                       className="rounded p-1.5 hover:bg-slate-700 text-emerald-400 disabled:opacity-30"><PlayCircle className="w-4 h-4" /></button>
                     <button title="Delete" onClick={() => remove(a.license)} className="rounded p-1.5 hover:bg-slate-700 text-red-400"><Trash2 className="w-4 h-4" /></button>
                   </td>

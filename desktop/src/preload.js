@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('xvpn', {
   accountsImport: (text) => unwrap(ipcRenderer.invoke('accounts:import', text)),
   accountsDelete: (license) => unwrap(ipcRenderer.invoke('accounts:delete', license)),
   accountsExport: () => unwrap(ipcRenderer.invoke('accounts:export')),
+  accountsExportFile: () => unwrap(ipcRenderer.invoke('accounts:exportFile')),
   checkStart: (filter) => unwrap(ipcRenderer.invoke('check:start', filter)),
   checkStatus: () => unwrap(ipcRenderer.invoke('check:status')),
   checkCancel: () => unwrap(ipcRenderer.invoke('check:cancel')),

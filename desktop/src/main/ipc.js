@@ -12,18 +12,20 @@ const wrap = fn => async (_e, ...args) => {
 
 const coded = (code, message) => Object.assign(new Error(message), { code })
 
-export function registerIpc({ ipcMain, store, checkJob, connectManager, ctlAvailable, connectionState, send }) {
+export function registerIpc({ ipcMain, store, checkJob, connectManager, ctlAvailable, connectionState, saveExport }) {
   ipcMain.handle('ctl:available', wrap(async () => ctlAvailable))
   ipcMain.handle('accounts:list', wrap(async () => store.list()))
   ipcMain.handle('accounts:import', wrap(async (text) => store.importText(text)))
   ipcMain.handle('accounts:delete', wrap(async (license) => ({ deleted: store.remove(license) })))
   ipcMain.handle('accounts:export', wrap(async () => store.exportLines()))
+  ipcMain.handle('accounts:exportFile', wrap(async () => saveExport(await store.exportLines())))
 
   ipcMain.handle('check:start', wrap(async (filter = 'all') => {
     if (checkJob.status().running) throw coded('job_running', 'a check job is already running')
     if (!ctlAvailable) throw coded('ctl_missing', `expressvpnctl not found — install the ExpressVPN app`)
     const st = await connectionState()
     if (st !== 'Disconnected') throw coded('vpn_active', `VPN state is "${st}" — disconnect before checking`)
+    if (connectManager.status().state !== 'idle') throw coded('connect_active', 'a connect flow is active')
     return checkJob.start(filter)
   }))
   ipcMain.handle('check:status', wrap(async () => checkJob.status()))

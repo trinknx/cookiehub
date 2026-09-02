@@ -1,5 +1,5 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
-import { existsSync, readFileSync } from 'node:fs'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openStore } from './store.js'
@@ -11,6 +11,14 @@ import { makeCtl, connectionState, checkLicense, loginOnly, DEFAULT_CTL } from '
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 let mainWindow = null
 const send = (channel, payload) => mainWindow?.webContents?.send(channel, payload)
+
+// Export = save dialog (Ruling 17): pick a path next to the user's files, never clipboard
+async function saveExport(text) {
+  const r = await dialog.showSaveDialog(mainWindow, { defaultPath: 'accounts-export.txt', filters: [{ name: 'Text', extensions: ['txt'] }] })
+  if (r.canceled) return { canceled: true }
+  writeFileSync(r.filePath, text)
+  return { path: r.filePath }
+}
 
 function bootstrap() {
   const store = openStore(path.join(app.getPath('userData'), 'xvpn-manager.db'))
@@ -43,7 +51,7 @@ function bootstrap() {
     isBusy: () => checkJob.status().running,
     onEvent: s => send('connect:state', s),
   })
-  registerIpc({ ipcMain, store, checkJob, connectManager, ctlAvailable, connectionState: () => connectionState(ctl), send })
+  registerIpc({ ipcMain, store, checkJob, connectManager, ctlAvailable, connectionState: () => connectionState(ctl), saveExport })
 }
 
 function createWindow() {
