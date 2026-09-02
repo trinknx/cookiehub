@@ -6,3 +6,5 @@ client/dist/
 # license vault + check reports stay local (secrets)
 tools/expressvpn/accounts.txt
 tools/expressvpn/report.*
+desktop/dist/
+desktop/release/

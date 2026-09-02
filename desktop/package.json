@@ -1,0 +1,32 @@
+{
+  "name": "xvpn-manager",
+  "private": true,
+  "type": "module",
+  "main": "src/main/index.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5174 && cross-env VITE_DEV=1 electron .\"",
+    "build:ui": "vite build",
+    "postinstall": "node -e \"const p=require('path');const {rebuild}=require('@electron/rebuild');rebuild({buildPath:p.resolve('.'),projectRootPath:p.resolve('.'),onlyModules:['better-sqlite3'],force:true,electronVersion:require('electron/package.json').version}).then(()=>console.log('better-sqlite3 rebuilt for Electron ABI (scoped to desktop/node_modules)')).catch(e=>{console.error(e);process.exit(1)})\"",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.10.0",
+    "lucide-react": "^1.34.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.10",
+    "vite": "^5.4.0",
+    "vitest": "^2.0.5",
+    "wait-on": "^8.0.0"
+  }
+}

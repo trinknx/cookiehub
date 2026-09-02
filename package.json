@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "server",
-    "client"
+    "client",
+    "desktop"
   ],
   "scripts": {
     "build": "npm run build -w client",
@@ -12,6 +13,9 @@
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
-    "esbuild@0.21.5": true
+    "esbuild@0.21.5": true,
+    "electron": true,
+    "@electron/rebuild": true,
+    "better-sqlite3@12.10.0": true
   }
 }
