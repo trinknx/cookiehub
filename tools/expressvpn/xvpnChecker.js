@@ -93,21 +93,18 @@ async function waitForLoginResult(license, accountJsonPath, timeoutMs) {
   }
 }
 
-// Full login probe for one license. Sequence (each step earned by a real
-// failure during development — keep them):
-//   1. logout, wait for the logged-out state to persist (logging in before
-//      logout teardown finishes gets the login silently rejected)
-//   2. login; non-zero exit = hard failure
-//   3. poll account.json for loggedIn=true within the window — never turning
-//      true means the server rejected the code (the daemon still exits 0)
-export async function checkLicense(license, {
+// Login sequence shared by checkLicense (probe) and the desktop app's
+// connectManager: logout + settle, login, poll for server confirmation.
+// Returns the confirmed account frame, or null when the server rejected the
+// code (loggedIn never turned true in time). Throws Error{code:'login_failed'}
+// when the ctl login itself exits non-zero.
+export async function loginOnly(license, {
   ctl = makeCtl(),
   accountJsonPath = DEFAULT_ACCOUNT_JSON,
   settleMs = 1500,
   confirmTimeoutMs = 20000,
   tmpDir,
 } = {}) {
-  const result = { state: 'invalid', detail: '', live: null }
   const dir = tmpDir || mkdtempSync(path.join(tmpdir(), 'xvpn-'))
   const keyFile = path.join(dir, 'key.txt')
   writeFileSync(keyFile, license, { flag: 'w' })
@@ -124,32 +121,44 @@ export async function checkLicense(license, {
 
     const login = await ctl(['login', keyFile], 90000)
     if (login.code !== 0) {
-      result.detail = (login.err || login.out || `exit ${login.code}`).slice(0, 200)
-      return result
+      const e = new Error((login.err || login.out || `exit ${login.code}`).slice(0, 200))
+      e.code = 'login_failed'
+      throw e
     }
-
-    const acc = await waitForLoginResult(license, accountJsonPath, confirmTimeoutMs)
-    if (!acc) {
-      result.detail = 'server rejected the activation code (no confirmation in time)'
-      return result
-    }
-    result.state = 'valid'
-    result.live = {
-      active: acc.active,
-      expired: acc.expired,
-      canceled: acc.canceled,
-      daysRemaining: acc.daysRemaining,
-      expireIso: acc.expirationTime ? new Date(acc.expirationTime).toISOString().slice(0, 10) : '',
-      payment: acc.paymentMethod || '',
-      recurring: !!acc.recurring,
-      isTrial: !!acc.isTrial,
-    }
-    if (acc.canceled) { result.state = 'canceled'; result.detail = 'subscription canceled' }
-    else if (acc.expired || (acc.daysRemaining ?? 0) <= 0) { result.state = 'expired'; result.detail = 'no days remaining' }
-    return result
+    return await waitForLoginResult(license, accountJsonPath, confirmTimeoutMs)
   } finally {
     try { unlinkSync(keyFile) } catch { /* already gone */ }
-    // caller-managed dirs survive; self-created ones are cleaned up
     if (tmpDir === undefined) { try { rmSync(dir, { recursive: true, force: true }) } catch { /* best-effort */ } }
   }
+}
+
+// Full login probe for one license: login via loginOnly, then classify the
+// account frame. Same sequence and detail strings as before the extraction.
+export async function checkLicense(license, opts = {}) {
+  const result = { state: 'invalid', detail: '', live: null }
+  let acc
+  try {
+    acc = await loginOnly(license, opts)
+  } catch (e) {
+    result.detail = e.message
+    return result
+  }
+  if (!acc) {
+    result.detail = 'server rejected the activation code (no confirmation in time)'
+    return result
+  }
+  result.state = 'valid'
+  result.live = {
+    active: acc.active,
+    expired: acc.expired,
+    canceled: acc.canceled,
+    daysRemaining: acc.daysRemaining,
+    expireIso: acc.expirationTime ? new Date(acc.expirationTime).toISOString().slice(0, 10) : '',
+    payment: acc.paymentMethod || '',
+    recurring: !!acc.recurring,
+    isTrial: !!acc.isTrial,
+  }
+  if (acc.canceled) { result.state = 'canceled'; result.detail = 'subscription canceled' }
+  else if (acc.expired || (acc.daysRemaining ?? 0) <= 0) { result.state = 'expired'; result.detail = 'no days remaining' }
+  return result
 }
