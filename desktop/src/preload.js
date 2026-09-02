@@ -9,10 +9,12 @@ const sub = (ch, cb) => {
 
 // Main handlers answer with a plain envelope — { ok:true, data } |
 // { ok:false, code, message } — because ipcMain.handle rejections are
-// re-created renderer-side and lose custom properties (err.code). Unwrap it
-// here and throw a real Error carrying .code so the renderer sees both.
+// re-created renderer-side and lose custom properties (err.code). contextBridge
+// likewise reconstructs thrown Errors with `message` only, so unwrap() embeds
+// the code in the message itself: '[<code>] <message>' (plain '<message>' when
+// there is no code) — the only shape that survives both boundaries intact.
 const unwrap = p => p.then(r => {
-  if (r && r.ok === false) { const e = new Error(r.message); e.code = r.code; throw e }
+  if (r && r.ok === false) throw new Error(r.code ? `[${r.code}] ${r.message}` : r.message)
   return r.data
 })
 contextBridge.exposeInMainWorld('xvpn', {
